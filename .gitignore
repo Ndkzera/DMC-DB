@@ -1,0 +1,21 @@
+# Dados locais
+.claude/
+.nicegui/
+
+# Credenciais e segredos
+credentials.json
+token.json
+*.env
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Editor
+.vscode/
+*.swp
