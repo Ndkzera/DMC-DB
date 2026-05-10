@@ -1,28 +1,39 @@
-"""CRUD de clientes — persistência em JSON."""
+"""CRUD de clientes — persistência em SQLite."""
 
-import json
 import shutil
-
-from config import CLIENTES_FILE, CLIENTES_DIR
+from config import CLIENTES_DIR
+from services.database import get_conn, _insert_cliente
 from services.log import log_action
 
 
+def _row_to_dict(row) -> dict:
+    d = dict(row)
+    d["obra_mesmo"] = bool(d.get("obra_mesmo", 1))
+    return d
+
+
 def load_clientes() -> list:
+    conn = get_conn()
     try:
-        return json.loads(CLIENTES_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+        rows = conn.execute("SELECT * FROM clientes ORDER BY nome").fetchall()
+        return [_row_to_dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def save_clientes(clientes: list) -> None:
-    CLIENTES_FILE.write_text(
-        json.dumps(clientes, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    """Substitui toda a tabela (mantido para compatibilidade)."""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM clientes")
+        for c in clientes:
+            _insert_cliente(conn, c)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _pasta_cliente(nome: str):
-    """Retorna o Path da pasta do cliente dentro de #CLIENTES."""
     invalidos = set(r'\/:*?"<>|')
     safe = "".join(c for c in nome if c not in invalidos).strip() or "cliente"
     return CLIENTES_DIR / safe
@@ -34,26 +45,35 @@ def _salvar_dados_pasta(cliente: dict) -> None:
     (pasta / "dados.txt").write_text(cliente_to_txt(cliente), encoding="utf-8")
 
 
+def add_cliente(cliente: dict, usuario: str = "", perfil: str = "") -> None:
+    conn = get_conn()
+    try:
+        _insert_cliente(conn, cliente)
+        conn.commit()
+    finally:
+        conn.close()
+    _salvar_dados_pasta(cliente)
+    log_action(usuario, perfil, "criar", "cliente", cliente.get("nome", ""),
+               str(_pasta_cliente(cliente.get("nome", ""))))
+
+
 def update_cliente(original_cpf: str, updated: dict,
                    usuario: str = "", perfil: str = "") -> None:
-    clientes = load_clientes()
-    old_nome = None
-    for i, c in enumerate(clientes):
-        if c.get("cpf") == original_cpf:
-            old_nome = c.get("nome", "")
-            clientes[i] = updated
-            save_clientes(clientes)
-            break
-    else:
-        clientes.append(updated)
-        save_clientes(clientes)
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT nome FROM clientes WHERE cpf=?", (original_cpf,)
+        ).fetchone()
+        old_nome = row["nome"] if row else None
+        _insert_cliente(conn, updated)
+        conn.commit()
+    finally:
+        conn.close()
 
     new_nome = updated.get("nome", "")
-
-    # Renomeia pasta se o nome mudou
     if old_nome and old_nome != new_nome:
         pasta_antiga = _pasta_cliente(old_nome)
-        pasta_nova   = _pasta_cliente(new_nome)
+        pasta_nova = _pasta_cliente(new_nome)
         if pasta_antiga.exists() and not pasta_nova.exists():
             pasta_antiga.rename(pasta_nova)
         log_action(usuario, perfil, "renomear", "cliente", new_nome,
@@ -61,22 +81,16 @@ def update_cliente(original_cpf: str, updated: dict,
     else:
         log_action(usuario, perfil, "editar", "cliente", new_nome,
                    str(_pasta_cliente(new_nome)))
-
     _salvar_dados_pasta(updated)
 
 
-def add_cliente(cliente: dict, usuario: str = "", perfil: str = "") -> None:
-    clientes = load_clientes()
-    clientes.append(cliente)
-    save_clientes(clientes)
-    _salvar_dados_pasta(cliente)
-    log_action(usuario, perfil, "criar", "cliente", cliente.get("nome", ""),
-               str(_pasta_cliente(cliente.get("nome", ""))))
-
-
 def delete_cliente(cpf: str, nome: str, usuario: str = "", perfil: str = "") -> None:
-    clientes = [c for c in load_clientes() if c.get("cpf") != cpf]
-    save_clientes(clientes)
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM clientes WHERE cpf=?", (cpf,))
+        conn.commit()
+    finally:
+        conn.close()
     pasta = _pasta_cliente(nome)
     log_action(usuario, perfil, "excluir", "cliente", nome, str(pasta))
     if pasta.exists():

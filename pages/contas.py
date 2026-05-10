@@ -208,7 +208,7 @@ html, body, .nicegui-content {
   background: var(--dmc-bg);
   border: 1px solid var(--dmc-b1);
   border-radius: 8px;
-  color: var(--dmc-fg);
+  color: var(--dmc-text);
   font: 13px var(--dmc-fm);
   padding: 9px 12px;
   outline: none;

@@ -121,6 +121,10 @@ async def cnpj_endpoint(cnpj: str):
         return JSONResponse({"status": "ERROR", "detail": str(ex)}, status_code=502)
 
 
+# ── Banco de dados ───────────────────────────────────────────────────
+from services.database import init_db
+init_db()
+
 # ── Usuário padrão ───────────────────────────────────────────────────
 from services.auth import ensure_default_user
 ensure_default_user()
@@ -134,6 +138,8 @@ import pages.campo     # noqa: F401, E402  (registra @ui.page("/campo"))
 import pages.mobile    # noqa: F401, E402  (registra @ui.page("/mobile"))
 import pages.acesso    # noqa: F401, E402  (registra @ui.page("/acesso"))
 import pages.lixeira   # noqa: F401, E402  (registra @ui.page("/lixeira"))
+import pages.log        # noqa: F401, E402  (registra @ui.page("/log"))
+import pages.financeiro # noqa: F401, E402  (registra @ui.page("/financeiro"))
 
 # ── Inicialização ────────────────────────────────────────────────────
 if __name__ == "__main__":

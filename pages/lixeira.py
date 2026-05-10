@@ -10,6 +10,7 @@ from config import ROOT_DIR, TRASH_DIR
 from services.auth import check_login, current_user_label, current_user_perfil, is_authenticated
 from services.acesso import has_access
 from services.files import cat, fmt_size, read_trash_meta
+from services.log import log_action
 from ui.styles import BOOTSTRAP_CDN, CSS, UTILS_JS
 
 _TS_RE    = re.compile(r"__\d{8}_\d{6}$")
@@ -457,6 +458,11 @@ def lixeira_page():
                 if meta_f.exists():
                     meta_f.unlink()
                 folder_lbl = _raw if _raw and _raw not in (".", "/") else "Raiz"
+                entidade = "pasta" if path.is_dir() else "arquivo"
+                log_action(
+                    current_user_label(), current_user_perfil(),
+                    "editar", entidade, orig, folder_lbl, "Restaurado da lixeira",
+                )
                 ui.notify(f"'{orig}' restaurado para '{folder_lbl}'.", type="positive")
             except Exception as ex:
                 ui.notify(f"Erro ao restaurar: {ex}", type="negative")
@@ -464,6 +470,7 @@ def lixeira_page():
 
         def _do_delete(path: Path):
             def _confirm():
+                orig_nm = _orig_name(path)
                 try:
                     if path.is_dir():
                         shutil.rmtree(path)
@@ -472,7 +479,12 @@ def lixeira_page():
                     meta_f = TRASH_DIR / ".meta" / f"{path.name}.json"
                     if meta_f.exists():
                         meta_f.unlink()
-                    ui.notify(f"'{_orig_name(path)}' excluído permanentemente.", type="positive")
+                    entidade = "pasta" if path.is_dir() else "arquivo"
+                    log_action(
+                        current_user_label(), current_user_perfil(),
+                        "excluir", entidade, orig_nm, "", "Exclusão permanente da lixeira",
+                    )
+                    ui.notify(f"'{orig_nm}' excluído permanentemente.", type="positive")
                 except Exception as ex:
                     ui.notify(f"Erro: {ex}", type="negative")
                 _render()

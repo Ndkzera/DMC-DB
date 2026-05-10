@@ -52,11 +52,35 @@ def lixeira_dialog() -> None:
                 with ui.element("div").style(
                     "padding:16px 20px;display:flex;flex-direction:column;gap:10px"
                 ):
-                    pw = (
-                        ui.input("Senha", password=True, password_toggle_button=True)
-                        .props('outlined dense color="red"')
-                        .style("font-family:var(--dmc-fm);font-size:12px")
-                    )
+                    ui.html('<label class="dmc-label" style="margin-bottom:5px">Senha</label>')
+                    with ui.element('div').style('position:relative;width:100%'):
+                        ui.html(
+                            '<input type="password" id="lx-pw-conf" class="dmc-input"'
+                            ' placeholder="••••••••" autocomplete="current-password"'
+                            ' style="padding-right:44px;height:40px;width:100%;box-sizing:border-box">'
+                        )
+                        with ui.element('button').style(
+                            'position:absolute;right:0;top:0;height:40px;width:40px;'
+                            'background:transparent;border:none;cursor:pointer;'
+                            'display:flex;align-items:center;justify-content:center;padding:0;'
+                        ).props('type=button tabindex=-1') as _lx_tog:
+                            _lx_icon = ui.html(
+                                '<span class="material-icons" '
+                                'style="font-size:18px;color:var(--dmc-muted)">visibility_off</span>'
+                            )
+
+                        async def _lx_pw_toggle():
+                            state = await ui.run_javascript(
+                                "var i=document.getElementById('lx-pw-conf');"
+                                "if(!i) return 'x';"
+                                "if(i.type==='password'){i.type='text';return 'text';}"
+                                "i.type='password';return 'password';"
+                            )
+                            _lx_icon.set_content(
+                                '<span class="material-icons" style="font-size:18px;color:var(--dmc-muted)">'
+                                + ('visibility' if state == 'text' else 'visibility_off') + '</span>'
+                            )
+                        _lx_tog.on('click', _lx_pw_toggle)
                     err_lbl = ui.html("").style(
                         "font:11px var(--dmc-fm);color:#F87171;min-height:14px"
                     )
@@ -75,9 +99,12 @@ def lixeira_dialog() -> None:
                                 "<span>Excluir</span>"
                             )
 
-                        def _do_confirm(pw_dlg=pw_dlg, pw=pw, err_lbl=err_lbl):
+                        async def _do_confirm(pw_dlg=pw_dlg, err_lbl=err_lbl):
+                            senha = await ui.run_javascript(
+                                "document.getElementById('lx-pw-conf')?.value || ''"
+                            )
                             email = _app.storage.user.get("dmc_user_email", "")
-                            if not check_login(email, pw.value):
+                            if not check_login(email, senha):
                                 err_lbl.set_content(
                                     '<span style="color:#F87171">Senha incorreta.</span>'
                                 )
@@ -86,7 +113,6 @@ def lixeira_dialog() -> None:
                             on_confirm()
 
                         cf.on("click", _do_confirm)
-                        pw.on("keydown.enter", _do_confirm)
 
     with ui.dialog().props("persistent") as dlg:
         dlg.open()

@@ -9,7 +9,7 @@ from nicegui import app as _app, ui
 
 from config import FOTOS_PONTO_DIR
 from services.agenda import fmt_event, get_events_for_month, is_connected
-from services.auth import current_user_name, current_user_perfil
+from services.auth import current_user_label, current_user_name, current_user_perfil
 from services.ponto import add_registro, delete_registro, load_ponto
 from ui.agenda_dialogs import conectar_agenda_dialog
 
@@ -358,7 +358,7 @@ def checkin_dialog() -> None:
                     "hora":      now.strftime("%H:%M:%S"),
                     "timestamp": now.isoformat(),
                 }
-                add_registro(registro)
+                add_registro(registro, perfil=current_user_perfil())
 
                 tipo_label = "Check-in" if registro["tipo"] == "checkin" else "Check-out"
                 ui.notify(f"✓ {tipo_label} registrado — {now.strftime('%H:%M')}", type="positive")
@@ -612,7 +612,10 @@ def historico_dialog() -> None:
                             ).props('title="Excluir"')
                             with del_btn:
                                 ui.html('<span class="material-icons" style="font-size:15px">delete_outline</span>')
-                            del_btn.on("click", lambda rid=r["id"]: [delete_registro(rid), render_hist()])
+                            del_btn.on("click", lambda rid=r["id"]: [
+                                delete_registro(rid, current_user_label(), current_user_perfil()),
+                                render_hist(),
+                            ])
 
         render_emp()
         render_tipo()

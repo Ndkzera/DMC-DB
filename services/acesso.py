@@ -1,12 +1,9 @@
-"""Configuração de permissões de acesso por perfil."""
+"""Configuração de permissões de acesso por perfil — persistência em SQLite."""
 
 import json
-from config import CONFIG_DIR
 from services.auth import PERFIS
+from services.database import get_conn
 
-ACESSO_FILE = CONFIG_DIR / "acesso.json"
-
-# (id, label, categoria)
 FEATURES: list[tuple[str, str, str]] = [
     # Sistema
     ("login_criar",        "Criar login de acesso ao sistema",     "Sistema"),
@@ -34,6 +31,7 @@ FEATURES: list[tuple[str, str, str]] = [
     ("adm_links",          "Links rápidos",                        "Administrativo"),
     ("adm_gestao_contas",  "Gestão de Contas",                     "Administrativo"),
     ("adm_config_acesso",  "Configuração de Acesso",               "Administrativo"),
+    ("adm_log",            "Log de Atividades",                    "Administrativo"),
     # Arquivos
     ("arq_visualizar",     "Visualização dos arquivos",            "Arquivos"),
     ("arq_upload",         "Upload de arquivos",                   "Arquivos"),
@@ -51,45 +49,65 @@ _FIELD_DEFAULTS: dict[str, dict[str, bool]] = {
     "FUNCIONÁRIO":             {fid: True  for fid, _, _ in FEATURES},
     "FUNCIONÁRIO CAMPO":       {fid: False for fid, _, _ in FEATURES},
 }
-# Campos campo sempre tem
 for _f in ("campo_login", "login_logar", "login_sair", "adm_checkin",
            "adm_registro", "adm_links", "arq_visualizar"):
     _FIELD_DEFAULTS["FUNCIONÁRIO CAMPO"][_f] = True
 
-# Gestão de Contas e Configuração de Acesso — só DEV e ADM
 for _p in ("FUNCIONÁRIO PRIORITÁRIO", "FUNCIONÁRIO", "FUNCIONÁRIO CAMPO"):
     _FIELD_DEFAULTS[_p]["adm_gestao_contas"] = False
     _FIELD_DEFAULTS[_p]["adm_config_acesso"] = False
+    _FIELD_DEFAULTS[_p]["adm_log"]           = False
 
-# Login/sair sempre habilitado para todos
 for _p in PERFIS:
     _FIELD_DEFAULTS[_p]["login_logar"] = True
     _FIELD_DEFAULTS[_p]["login_sair"]  = True
 
 
 def _default() -> dict:
-    return {p: dict(_FIELD_DEFAULTS.get(p, {fid: True for fid, _, _ in FEATURES})) for p in PERFIS}
+    return {
+        p: dict(_FIELD_DEFAULTS.get(p, {fid: True for fid, _, _ in FEATURES}))
+        for p in PERFIS
+    }
 
 
 def load_access() -> dict:
-    if ACESSO_FILE.exists():
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT perfil, config FROM acesso").fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return _default()
+
+    default = _default()
+    data: dict = {}
+    for row in rows:
         try:
-            data = json.loads(ACESSO_FILE.read_text(encoding="utf-8"))
-            default = _default()
-            for p in PERFIS:
-                data.setdefault(p, {})
-                for fid, _, _ in FEATURES:
-                    data[p].setdefault(fid, default[p].get(fid, True))
-            return data
+            cfg = json.loads(row["config"])
         except Exception:
-            pass
-    return _default()
+            cfg = {}
+        data[row["perfil"]] = cfg
+
+    for p in PERFIS:
+        data.setdefault(p, {})
+        for fid, _, _ in FEATURES:
+            data[p].setdefault(fid, default[p].get(fid, True))
+
+    return data
 
 
 def save_access(config: dict) -> None:
-    ACESSO_FILE.write_text(
-        json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    conn = get_conn()
+    try:
+        for perfil, cfg in config.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO acesso(perfil, config) VALUES(?,?)",
+                (perfil, json.dumps(cfg, ensure_ascii=False)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def has_access(perfil: str, feature_id: str) -> bool:

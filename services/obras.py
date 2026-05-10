@@ -1,55 +1,77 @@
-"""CRUD de obras — persistência em JSON."""
+"""CRUD de obras — persistência em SQLite."""
 
-import json
+import uuid
 from datetime import datetime
-from config import OBRAS_FILE
+from services.database import get_conn, _insert_obra
 from services.log import log_action
 
 
 def load_obras() -> list:
+    conn = get_conn()
     try:
-        return json.loads(OBRAS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+        rows = conn.execute(
+            "SELECT * FROM obras ORDER BY data_criacao DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def save_obras(obras: list) -> None:
-    OBRAS_FILE.write_text(
-        json.dumps(obras, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    """Substitui toda a tabela (mantido para compatibilidade)."""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM obras")
+        for o in obras:
+            _insert_obra(conn, o)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def add_obra(obra: dict, usuario: str = "", perfil: str = "") -> None:
-    obras = load_obras()
-    obras.append(obra)
-    save_obras(obras)
+    if not obra.get("id"):
+        obra["id"] = str(uuid.uuid4())
+    conn = get_conn()
+    try:
+        _insert_obra(conn, obra)
+        conn.commit()
+    finally:
+        conn.close()
     log_action(usuario, perfil, "criar", "obra",
                obra.get("cliente_nome", ""), obra.get("obra_log", ""))
 
 
 def update_obra_status(obra_id: str, status: str,
                        usuario: str = "", perfil: str = "") -> None:
-    obras = load_obras()
-    for o in obras:
-        if o.get("id") == obra_id:
-            o["status"] = status
-            o["data_atualizacao"] = datetime.now().strftime("%d/%m/%Y %H:%M")
-            save_obras(obras)
-            log_action(usuario, perfil, "editar", "obra",
-                       o.get("cliente_nome", ""), o.get("obra_log", ""),
-                       f"Status → {status}")
-            return
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE obras SET status=?, data_atualizacao=? WHERE id=?",
+            (status, agora, obra_id),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT cliente_nome, obra_log FROM obras WHERE id=?", (obra_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row:
+        log_action(usuario, perfil, "editar", "obra",
+                   row["cliente_nome"], row["obra_log"], f"Status → {status}")
 
 
 def delete_obra(obra_id: str, nome: str = "", usuario: str = "", perfil: str = "") -> None:
-    obras = load_obras()
-    obra_nome = nome
-    if not obra_nome:
-        for o in obras:
-            if o.get("id") == obra_id:
-                obra_nome = o.get("cliente_nome", obra_id)
-                break
-    obras = [o for o in obras if o.get("id") != obra_id]
-    save_obras(obras)
-    log_action(usuario, perfil, "excluir", "obra", obra_nome)
+    conn = get_conn()
+    try:
+        if not nome:
+            row = conn.execute(
+                "SELECT cliente_nome FROM obras WHERE id=?", (obra_id,)
+            ).fetchone()
+            nome = row["cliente_nome"] if row else obra_id
+        conn.execute("DELETE FROM obras WHERE id=?", (obra_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    log_action(usuario, perfil, "excluir", "obra", nome)

@@ -9,6 +9,7 @@ from nicegui import app as _app, ui
 
 from config import FOTOS_PONTO_DIR
 from services.agenda import fmt_event, get_events_for_month, is_connected
+from services.auth import current_user_perfil
 from services.ponto import add_registro, load_ponto
 from ui.styles import BOOTSTRAP_CDN, CSS, UTILS_JS
 
@@ -496,7 +497,7 @@ setTimeout(function(){
                             "data":             now.strftime("%d/%m/%Y"),
                             "hora":             now.strftime("%H:%M:%S"),
                             "timestamp":        now.isoformat(),
-                        })
+                        }, perfil=current_user_perfil())
 
                         tipo_label = "Check-in" if vals.get("tipo") == "checkin" else "Check-out"
                         ui.notify(f"✓ {tipo_label} registrado — {now.strftime('%H:%M')}", type="positive")

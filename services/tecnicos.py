@@ -1,48 +1,65 @@
-"""CRUD de técnicos — persistência em JSON."""
+"""CRUD de técnicos — persistência em SQLite."""
 
-import json
-from datetime import datetime
-
-from config import TECNICOS_FILE
+import uuid
+from services.database import get_conn, _insert_tecnico
 from services.log import log_action
 
 
 def load_tecnicos() -> list:
+    conn = get_conn()
     try:
-        return json.loads(TECNICOS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+        rows = conn.execute("SELECT * FROM tecnicos ORDER BY nome").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def save_tecnicos(tecnicos: list) -> None:
-    TECNICOS_FILE.write_text(
-        json.dumps(tecnicos, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    """Substitui toda a tabela (mantido para compatibilidade)."""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM tecnicos")
+        for t in tecnicos:
+            _insert_tecnico(conn, t)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def add_tecnico(tecnico: dict, usuario: str = "", perfil: str = "") -> None:
-    tecnicos = load_tecnicos()
-    tecnicos.append(tecnico)
-    save_tecnicos(tecnicos)
+    if not tecnico.get("id"):
+        tecnico["id"] = str(uuid.uuid4())
+    conn = get_conn()
+    try:
+        _insert_tecnico(conn, tecnico)
+        conn.commit()
+    finally:
+        conn.close()
     log_action(usuario, perfil, "criar", "tecnico", tecnico.get("nome", ""))
 
 
 def update_tecnico(original_cpf: str, updated: dict,
                    usuario: str = "", perfil: str = "") -> None:
-    tecnicos = load_tecnicos()
-    for i, t in enumerate(tecnicos):
-        if t.get("cpf") == original_cpf:
-            tecnicos[i] = updated
-            save_tecnicos(tecnicos)
-            log_action(usuario, perfil, "editar", "tecnico", updated.get("nome", ""))
-            return
-    tecnicos.append(updated)
-    save_tecnicos(tecnicos)
-    log_action(usuario, perfil, "criar", "tecnico", updated.get("nome", ""))
+    conn = get_conn()
+    try:
+        exists = conn.execute(
+            "SELECT id FROM tecnicos WHERE cpf=?", (original_cpf,)
+        ).fetchone()
+        if not updated.get("id"):
+            updated["id"] = exists["id"] if exists else str(uuid.uuid4())
+        _insert_tecnico(conn, updated)
+        conn.commit()
+    finally:
+        conn.close()
+    acao = "editar" if exists else "criar"
+    log_action(usuario, perfil, acao, "tecnico", updated.get("nome", ""))
 
 
 def delete_tecnico(cpf: str, nome: str = "", usuario: str = "", perfil: str = "") -> None:
-    tecnicos = [t for t in load_tecnicos() if t.get("cpf") != cpf]
-    save_tecnicos(tecnicos)
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM tecnicos WHERE cpf=?", (cpf,))
+        conn.commit()
+    finally:
+        conn.close()
     log_action(usuario, perfil, "excluir", "tecnico", nome or cpf)

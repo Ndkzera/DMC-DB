@@ -1,14 +1,10 @@
-"""Autenticação simples — usuários em JSON, senhas com sha256."""
+"""Autenticação — usuários em SQLite, senhas com sha256."""
 
 import hashlib
-import json
 import uuid
 from nicegui import app
-from config import CONFIG_DIR
+from services.database import get_conn, _insert_usuario
 
-USUARIOS_FILE = CONFIG_DIR / "usuarios.json"
-
-# Perfis disponíveis — ordem = nível de acesso (0 = maior)
 PERFIS = [
     "DESENVOLVEDOR",
     "ADMINISTRADOR",
@@ -17,13 +13,12 @@ PERFIS = [
     "FUNCIONÁRIO CAMPO",
 ]
 
-# Cor de badge por perfil
 PERFIL_CORES = {
-    "DESENVOLVEDOR":          ("#C4B5FD", "rgba(196,181,253,.12)", "rgba(196,181,253,.3)"),
-    "ADMINISTRADOR":          ("#FBBF24", "rgba(251,191,36,.10)",  "rgba(251,191,36,.28)"),
-    "FUNCIONÁRIO PRIORITÁRIO":("#60A5FA", "rgba(96,165,250,.10)",  "rgba(96,165,250,.28)"),
-    "FUNCIONÁRIO":            ("#4ADE80", "rgba(74,222,128,.08)",  "rgba(74,222,128,.25)"),
-    "FUNCIONÁRIO CAMPO":      ("#34D399", "rgba(52,211,153,.08)",  "rgba(52,211,153,.25)"),
+    "DESENVOLVEDOR":           ("#C4B5FD", "rgba(196,181,253,.12)", "rgba(196,181,253,.3)"),
+    "ADMINISTRADOR":           ("#FBBF24", "rgba(251,191,36,.10)",  "rgba(251,191,36,.28)"),
+    "FUNCIONÁRIO PRIORITÁRIO": ("#60A5FA", "rgba(96,165,250,.10)",  "rgba(96,165,250,.28)"),
+    "FUNCIONÁRIO":             ("#4ADE80", "rgba(74,222,128,.08)",  "rgba(74,222,128,.25)"),
+    "FUNCIONÁRIO CAMPO":       ("#34D399", "rgba(52,211,153,.08)",  "rgba(52,211,153,.25)"),
 }
 
 
@@ -31,17 +26,31 @@ def _hash(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
 
 
+def _row_to_user(row) -> dict:
+    d = dict(row)
+    d["admin"] = bool(d.get("admin", 0))
+    return d
+
+
 def _load() -> list:
+    conn = get_conn()
     try:
-        return json.loads(USUARIOS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+        rows = conn.execute("SELECT * FROM usuarios").fetchall()
+        return [_row_to_user(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def _save(users: list) -> None:
-    USUARIOS_FILE.write_text(
-        json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    """Substitui toda a tabela (mantido para compatibilidade)."""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM usuarios")
+        for u in users:
+            _insert_usuario(conn, u)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 _DEFAULT_EMAIL = "n_dk@live.com"
@@ -49,42 +58,54 @@ _DEFAULT_NOME  = "Nilton Jr"
 
 
 def ensure_default_user() -> None:
-    """Cria ou corrige o usuário padrão."""
-    users = _load()
-    default = next((u for u in users if u.get("perfil") == "DESENVOLVEDOR" or u.get("admin")), None)
-    if default is None:
-        _save([{
-            "id":         str(uuid.uuid4()),
-            "nome":       _DEFAULT_NOME,
-            "email":      _DEFAULT_EMAIL,
-            "telefone":   "",
-            "cargo":      "Desenvolvedor",
-            "senha_hash": _hash("1234"),
-            "perfil":     "DESENVOLVEDOR",
-            "admin":      True,
-        }])
-        return
-    changed = False
-    if default.get("email") != _DEFAULT_EMAIL:
-        default["email"] = _DEFAULT_EMAIL
-        changed = True
-    if default.get("nome") != _DEFAULT_NOME:
-        default["nome"] = _DEFAULT_NOME
-        changed = True
-    if not default.get("perfil"):
-        default["perfil"] = "DESENVOLVEDOR"
-        changed = True
-    if changed:
-        _save(users)
+    conn = get_conn()
+    try:
+        default = conn.execute(
+            "SELECT * FROM usuarios WHERE perfil='DESENVOLVEDOR' OR admin=1 LIMIT 1"
+        ).fetchone()
+        if default is None:
+            conn.execute(
+                "INSERT OR IGNORE INTO usuarios VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    str(uuid.uuid4()), _DEFAULT_NOME, _DEFAULT_EMAIL,
+                    "", "Desenvolvedor", _hash("1234"), "DESENVOLVEDOR", 1,
+                ),
+            )
+            conn.commit()
+            return
+        changed = False
+        updates = {}
+        if default["email"] != _DEFAULT_EMAIL:
+            updates["email"] = _DEFAULT_EMAIL
+            changed = True
+        if default["nome"] != _DEFAULT_NOME:
+            updates["nome"] = _DEFAULT_NOME
+            changed = True
+        if not default["perfil"]:
+            updates["perfil"] = "DESENVOLVEDOR"
+            changed = True
+        if changed:
+            for col, val in updates.items():
+                conn.execute(
+                    f"UPDATE usuarios SET {col}=? WHERE id=?",
+                    (val, default["id"]),
+                )
+            conn.commit()
+    finally:
+        conn.close()
 
 
 def check_login(email_or_nome: str, senha: str) -> dict | None:
-    """Retorna o usuário se credenciais válidas, senão None."""
     h = _hash(senha)
-    for u in _load():
-        if (u.get("email") == email_or_nome or u.get("nome") == email_or_nome) and u.get("senha_hash") == h:
-            return u
-    return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM usuarios WHERE (email=? OR nome=?) AND senha_hash=?",
+            (email_or_nome, email_or_nome, h),
+        ).fetchone()
+        return _row_to_user(row) if row else None
+    finally:
+        conn.close()
 
 
 def is_authenticated() -> bool:
@@ -93,10 +114,10 @@ def is_authenticated() -> bool:
 
 def login_user(user: dict) -> None:
     app.storage.user["dmc_logged_in"] = True
-    app.storage.user["dmc_user_nome"]  = user.get("nome", "")
-    app.storage.user["dmc_user_email"] = user.get("email", "")
-    app.storage.user["dmc_user_perfil"]= user.get("perfil", "FUNCIONÁRIO")
-    app.storage.user["dmc_user_admin"] = user.get("admin", False)
+    app.storage.user["dmc_user_nome"]   = user.get("nome", "")
+    app.storage.user["dmc_user_email"]  = user.get("email", "")
+    app.storage.user["dmc_user_perfil"] = user.get("perfil", "FUNCIONÁRIO")
+    app.storage.user["dmc_user_admin"]  = user.get("admin", False)
 
 
 def logout_user() -> None:
@@ -114,7 +135,6 @@ def current_user_perfil() -> str:
 
 
 def current_user_label() -> str:
-    """Melhor identificador do usuário: nome → e-mail → perfil."""
     nome = app.storage.user.get("dmc_user_nome", "").strip()
     if nome:
         return nome

@@ -17,7 +17,7 @@ from services.clientes import (
 )
 from services.files import delete_item, file_url, list_dir, safe, san
 from services.auth import check_login, current_user_label, current_user_name, current_user_perfil
-from services.log import log_action
+from services.log import log_action, load_logs, ACOES, ENTIDADES
 
 
 # ── Pasta ────────────────────────────────────────────────────────────
@@ -444,11 +444,35 @@ def ver_ficha_dialog(c: dict) -> None:
                                 with ui.element("div").style(
                                     "padding:16px 20px;display:flex;flex-direction:column;gap:10px"
                                 ):
-                                    pw = (
-                                        ui.input("Senha", password=True, password_toggle_button=True)
-                                        .props('outlined dense color="red"')
-                                        .style("font-family:var(--dmc-fm);font-size:12px")
-                                    )
+                                    ui.html('<label class="dmc-label" style="margin-bottom:5px">Senha</label>')
+                                    with ui.element('div').style('position:relative;width:100%'):
+                                        ui.html(
+                                            '<input type="password" id="dlg-pw-del" class="dmc-input"'
+                                            ' placeholder="••••••••" autocomplete="current-password"'
+                                            ' style="padding-right:44px;height:40px;width:100%;box-sizing:border-box">'
+                                        )
+                                        with ui.element('button').style(
+                                            'position:absolute;right:0;top:0;height:40px;width:40px;'
+                                            'background:transparent;border:none;cursor:pointer;'
+                                            'display:flex;align-items:center;justify-content:center;padding:0;'
+                                        ).props('type=button tabindex=-1') as _dlg_tog:
+                                            _dlg_icon = ui.html(
+                                                '<span class="material-icons" '
+                                                'style="font-size:18px;color:var(--dmc-muted)">visibility_off</span>'
+                                            )
+
+                                        async def _dlg_pw_toggle():
+                                            state = await ui.run_javascript(
+                                                "var i=document.getElementById('dlg-pw-del');"
+                                                "if(!i) return 'x';"
+                                                "if(i.type==='password'){i.type='text';return 'text';}"
+                                                "i.type='password';return 'password';"
+                                            )
+                                            _dlg_icon.set_content(
+                                                '<span class="material-icons" style="font-size:18px;color:var(--dmc-muted)">'
+                                                + ('visibility' if state == 'text' else 'visibility_off') + '</span>'
+                                            )
+                                        _dlg_tog.on('click', _dlg_pw_toggle)
                                     err_lbl = ui.html("").style(
                                         "font:11px var(--dmc-fm);color:#F87171;min-height:14px"
                                     )
@@ -467,9 +491,12 @@ def ver_ficha_dialog(c: dict) -> None:
                                                 "<span>Excluir</span>"
                                             )
 
-                                        def _confirmar(pw_dlg=pw_dlg, pw=pw, err_lbl=err_lbl):
+                                        async def _confirmar(pw_dlg=pw_dlg, err_lbl=err_lbl, c=c):
+                                            senha = await ui.run_javascript(
+                                                "document.getElementById('dlg-pw-del')?.value || ''"
+                                            )
                                             email = _app.storage.user.get("dmc_user_email", "")
-                                            if not check_login(email, pw.value):
+                                            if not check_login(email, senha):
                                                 err_lbl.set_content(
                                                     '<span style="color:#F87171">Senha incorreta.</span>'
                                                 )
@@ -481,7 +508,6 @@ def ver_ficha_dialog(c: dict) -> None:
                                             ui.notify(f"Cliente '{c.get('nome', '')}' excluído.", type="positive")
 
                                         cf.on("click", _confirmar)
-                                        pw.on("keydown.enter", _confirmar)
 
                     del_btn = ui.element("button").classes("dmc-btn dmc-btn-danger dmc-btn-sm")
                     with del_btn:
@@ -1343,4 +1369,229 @@ def cadastrar_cliente_dialog() -> None:
       }});
     }},120);
     """)
+    dlg.open()
+
+
+# ── Log de Atividades ─────────────────────────────────────────────────────────
+
+def audit_log_dialog() -> None:
+    """Visualizador do log de auditoria."""
+
+    _ACAO_CFG = {
+        "criar":    ("#4ADE80", "rgba(74,222,128,.10)",  "add_circle",                "Criar"),
+        "editar":   ("#FBBF24", "rgba(251,191,36,.10)",  "edit",                      "Editar"),
+        "excluir":  ("#F87171", "rgba(248,113,113,.10)", "delete_forever",            "Excluir"),
+        "renomear": ("#60A5FA", "rgba(96,165,250,.10)",  "drive_file_rename_outline", "Renomear"),
+        "upload":   ("#A78BFA", "rgba(167,139,250,.10)", "cloud_upload",              "Upload"),
+        "pasta":    ("#34D399", "rgba(52,211,153,.10)",  "create_new_folder",         "Pasta"),
+    }
+
+    _state = {"busca": "", "acao": "todos", "entidade": "todos"}
+
+    with ui.dialog() as dlg, ui.card().style(
+        "background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;"
+        "border-radius:18px!important;padding:0;"
+        "width:min(900px,97vw)!important;height:92vh;max-height:92vh;"
+        "display:flex;flex-direction:column;color:var(--dmc-text)!important;position:relative;"
+    ):
+        ui.button(icon="close", on_click=dlg.close).props("flat round dense").style(
+            "color:var(--dmc-muted);position:absolute;top:12px;right:12px;z-index:10;"
+        )
+
+        # ── Cabeçalho ─────────────────────────────────────────────────
+        with ui.element("div").style(
+            "padding:18px 24px;border-bottom:1px solid var(--dmc-b1);"
+            "display:flex;align-items:center;gap:14px;flex-shrink:0;padding-right:52px;"
+        ):
+            ui.html(
+                '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;'
+                'background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);'
+                'display:flex;align-items:center;justify-content:center;">'
+                '<span class="material-icons" style="font-size:20px;color:#60A5FA">history</span></div>'
+            )
+            with ui.element("div"):
+                ui.html('<div style="font:700 16px var(--dmc-fd);color:var(--dmc-text)">Log de Atividades</div>')
+                ui.html(
+                    '<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">'
+                    'Registro de todas as ações realizadas no sistema</div>'
+                )
+
+        # ── Filtros ────────────────────────────────────────────────────
+        with ui.element("div").style(
+            "padding:12px 24px;border-bottom:1px solid var(--dmc-b1);flex-shrink:0;"
+            "display:flex;flex-direction:column;gap:8px;"
+        ):
+            with ui.element("div").style(
+                "display:flex;align-items:center;gap:8px;"
+                "background:var(--dmc-bg3);border:1px solid var(--dmc-b1);"
+                "border-radius:8px;padding:0 12px;height:36px;"
+            ):
+                ui.html('<span class="material-icons" style="font-size:16px;color:var(--dmc-muted2)">search</span>')
+                busca_inp = ui.input(placeholder="Buscar por nome, usuário ou caminho…").props(
+                    "borderless dense"
+                ).style("flex:1;font:13px var(--dmc-fm)")
+
+            acao_area    = ui.element("div").style("display:flex;gap:6px;flex-wrap:wrap")
+            entidade_area = ui.element("div").style("display:flex;gap:6px;flex-wrap:wrap")
+
+        # ── Lista ──────────────────────────────────────────────────────
+        lista = ui.element("div").style(
+            "flex:1;min-height:0;overflow-y:auto;padding:16px 24px;"
+        )
+
+        def _render():
+            busca    = _state["busca"].lower().strip()
+            fil_acao = _state["acao"]
+            fil_ent  = _state["entidade"]
+
+            entries = load_logs(limit=500)
+            if fil_acao != "todos":
+                entries = [e for e in entries if e.get("acao") == fil_acao]
+            if fil_ent != "todos":
+                entries = [e for e in entries if e.get("entidade") == fil_ent]
+            if busca:
+                entries = [
+                    e for e in entries
+                    if busca in (e.get("nome") or "").lower()
+                    or busca in (e.get("usuario") or "").lower()
+                    or busca in (e.get("caminho") or "").lower()
+                    or busca in (e.get("detalhe") or "").lower()
+                ]
+
+            lista.clear()
+            with lista:
+                if not entries:
+                    with ui.element("div").style(
+                        "display:flex;flex-direction:column;align-items:center;"
+                        "justify-content:center;height:200px;gap:10px;"
+                    ):
+                        ui.html('<span class="material-icons" style="font-size:48px;color:var(--dmc-b2)">manage_search</span>')
+                        ui.html('<div style="font:13px var(--dmc-fm);color:var(--dmc-muted2)">Nenhum registro encontrado.</div>')
+                    return
+
+                ui.html(
+                    f'<div style="font:10px var(--dmc-mono);color:var(--dmc-muted2);'
+                    f'letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px">'
+                    f'{len(entries)} registro{"s" if len(entries) != 1 else ""}</div>'
+                )
+
+                for e in entries:
+                    acao     = e.get("acao", "")
+                    entidade = e.get("entidade", "")
+                    cor, bg, ic, label = _ACAO_CFG.get(
+                        acao, ("#94A3B8", "rgba(148,163,184,.10)", "info", acao or "?")
+                    )
+                    ent_icon = ENTIDADES.get(entidade, "help_outline")
+
+                    with ui.element("div").style(
+                        "background:var(--dmc-bg3);border:1px solid var(--dmc-b1);"
+                        "border-radius:10px;padding:10px 14px;margin-bottom:6px;"
+                        "display:flex;align-items:flex-start;gap:12px;"
+                    ):
+                        ui.html(
+                            f'<div style="width:34px;height:34px;border-radius:8px;flex-shrink:0;margin-top:1px;'
+                            f'background:{bg};border:1px solid {cor}44;'
+                            f'display:flex;align-items:center;justify-content:center;">'
+                            f'<span class="material-icons" style="font-size:17px;color:{cor}">{ic}</span></div>'
+                        )
+                        with ui.element("div").style("flex:1;min-width:0"):
+                            with ui.element("div").style(
+                                "display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:5px"
+                            ):
+                                ui.html(
+                                    f'<span style="font:600 10px var(--dmc-mono);padding:2px 7px;'
+                                    f'border-radius:4px;background:{bg};color:{cor};'
+                                    f'border:1px solid {cor}33;flex-shrink:0;text-transform:uppercase;'
+                                    f'letter-spacing:.06em">{label}</span>'
+                                )
+                                ui.html(
+                                    f'<span class="material-icons" style="font-size:14px;'
+                                    f'color:var(--dmc-muted2);flex-shrink:0">{ent_icon}</span>'
+                                )
+                                ui.html(
+                                    f'<span style="font:500 13px var(--dmc-fm);color:var(--dmc-text);'
+                                    f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+                                    f'max-width:340px" title="{e.get("nome","")}">'
+                                    f'{e.get("nome") or "—"}</span>'
+                                )
+                            with ui.element("div").style(
+                                "display:flex;align-items:center;gap:8px;flex-wrap:wrap;"
+                            ):
+                                ui.html(
+                                    f'<span class="material-icons" style="font-size:12px;color:var(--dmc-muted2)">person</span>'
+                                    f'<span style="font:12px var(--dmc-fm);color:var(--dmc-muted2)">'
+                                    f'{e.get("usuario") or "—"}</span>'
+                                )
+                                if e.get("perfil") and e.get("perfil") != "—":
+                                    ui.html(
+                                        f'<span style="font:9px var(--dmc-mono);padding:1px 6px;'
+                                        f'border-radius:3px;background:rgba(255,255,255,.06);'
+                                        f'color:var(--dmc-muted2);border:1px solid var(--dmc-b1)">'
+                                        f'{e.get("perfil","")}</span>'
+                                    )
+                                ui.html(
+                                    f'<span style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                                    f'margin-left:auto;flex-shrink:0">'
+                                    f'{e.get("data","")} · {e.get("hora","")}</span>'
+                                )
+                            extra = " · ".join(filter(None, [e.get("caminho",""), e.get("detalhe","")]))
+                            if extra:
+                                ui.html(
+                                    f'<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                                    f'margin-top:4px;white-space:nowrap;overflow:hidden;'
+                                    f'text-overflow:ellipsis" title="{extra}">{extra}</div>'
+                                )
+
+        def _build_pills():
+            acao_area.clear()
+            entidade_area.clear()
+
+            with acao_area:
+                for key, label in [("todos", "Todas")] + [(k, v[3]) for k, v in _ACAO_CFG.items()]:
+                    active = _state["acao"] == key
+                    cor    = _ACAO_CFG[key][0] if key != "todos" else "#60A5FA"
+                    border = cor if active else "var(--dmc-b1)"
+                    bg_p   = f"{cor}18" if active else "var(--dmc-bg3)"
+                    color  = cor if active else "var(--dmc-muted2)"
+                    b = ui.element("button").style(
+                        f"font:{'600' if active else '500'} 11px var(--dmc-mono);"
+                        f"padding:3px 10px;border-radius:6px;border:1px solid {border};"
+                        f"background:{bg_p};color:{color};cursor:pointer;letter-spacing:.04em;"
+                        f"text-transform:uppercase;transition:all .15s"
+                    )
+                    with b:
+                        ui.html(f"<span>{label}</span>")
+                    b.on("click", lambda k=key: [_state.update({"acao": k}), _build_pills(), _render()])
+
+            with entidade_area:
+                ent_labels = {
+                    "todos":   ("help_outline",     "Todos"),
+                    "cliente": ("person",            "Cliente"),
+                    "tecnico": ("engineering",       "Técnico"),
+                    "obra":    ("construction",      "Obra"),
+                    "arquivo": ("insert_drive_file", "Arquivo"),
+                    "pasta":   ("folder",            "Pasta"),
+                    "ponto":   ("fingerprint",       "Ponto"),
+                }
+                for key, (icon, label) in ent_labels.items():
+                    active = _state["entidade"] == key
+                    border = "#94A3B8" if active else "var(--dmc-b1)"
+                    bg_p   = "rgba(148,163,184,.12)" if active else "var(--dmc-bg3)"
+                    color  = "#94A3B8" if active else "var(--dmc-muted2)"
+                    b = ui.element("button").style(
+                        f"display:inline-flex;align-items:center;gap:4px;"
+                        f"font:{'600' if active else '500'} 11px var(--dmc-fm);"
+                        f"padding:3px 10px;border-radius:6px;border:1px solid {border};"
+                        f"background:{bg_p};color:{color};cursor:pointer;transition:all .15s"
+                    )
+                    with b:
+                        ui.html(f'<span class="material-icons" style="font-size:12px">{icon}</span>')
+                        ui.html(f"<span>{label}</span>")
+                    b.on("click", lambda k=key: [_state.update({"entidade": k}), _build_pills(), _render()])
+
+        busca_inp.on("input", lambda e: [_state.update({"busca": e.value or ""}), _render()])
+
+        _build_pills()
+        _render()
+
     dlg.open()

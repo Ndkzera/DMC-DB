@@ -1,14 +1,10 @@
-"""Registro centralizado de ações dos usuários (auditoria)."""
+"""Registro centralizado de ações dos usuários (auditoria) — SQLite."""
 
-import json
 from datetime import datetime
+from services.database import get_conn
 
-from config import CONFIG_DIR
-
-LOG_FILE = CONFIG_DIR / "audit_log.json"
 _MAX = 5000
 
-# Hierarquia de perfis (maior = mais forte)
 _FORCA = {
     "DESENVOLVEDOR":           5,
     "ADMINISTRADOR":           4,
@@ -18,12 +14,12 @@ _FORCA = {
 }
 
 ACOES = {
-    "criar":    ("add_circle",       "#4ADE80"),
-    "editar":   ("edit",             "#FBBF24"),
-    "excluir":  ("delete_forever",   "#F87171"),
-    "renomear": ("drive_file_rename_outline", "#60A5FA"),
-    "upload":   ("cloud_upload",     "#A78BFA"),
-    "pasta":    ("create_new_folder","#34D399"),
+    "criar":    ("add_circle",                   "#4ADE80"),
+    "editar":   ("edit",                          "#FBBF24"),
+    "excluir":  ("delete_forever",                "#F87171"),
+    "renomear": ("drive_file_rename_outline",     "#60A5FA"),
+    "upload":   ("cloud_upload",                  "#A78BFA"),
+    "pasta":    ("create_new_folder",             "#34D399"),
 }
 
 ENTIDADES = {
@@ -36,53 +32,60 @@ ENTIDADES = {
 }
 
 
-def _load() -> list:
-    try:
-        return json.loads(LOG_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-
-
 def log_action(
     usuario: str,
     perfil: str,
-    acao: str,      # "criar" | "editar" | "excluir" | "renomear" | "upload" | "pasta"
-    entidade: str,  # "cliente" | "tecnico" | "obra" | "arquivo" | "pasta" | "ponto"
+    acao: str,
+    entidade: str,
     nome: str,
     caminho: str = "",
     detalhe: str = "",
 ) -> None:
     now = datetime.now()
-    entry = {
-        "timestamp": now.isoformat(timespec="seconds"),
-        "data":      now.strftime("%d/%m/%Y"),
-        "hora":      now.strftime("%H:%M:%S"),
-        "usuario":   usuario or "—",
-        "perfil":    perfil  or "—",
-        "forca":     _FORCA.get(perfil, 0),
-        "acao":      acao,
-        "entidade":  entidade,
-        "nome":      nome,
-        "caminho":   caminho,
-        "detalhe":   detalhe,
-    }
+    conn = get_conn()
     try:
-        entries = _load()
-        entries.append(entry)
-        LOG_FILE.write_text(
-            json.dumps(entries[-_MAX:], ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        conn.execute(
+            "INSERT INTO audit_log(timestamp,data,hora,usuario,perfil,forca,"
+            "acao,entidade,nome,caminho,detalhe) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                now.isoformat(timespec="seconds"),
+                now.strftime("%d/%m/%Y"),
+                now.strftime("%H:%M:%S"),
+                usuario or "—",
+                perfil  or "—",
+                _FORCA.get(perfil, 0),
+                acao, entidade, nome, caminho, detalhe,
+            ),
         )
-        print(f"[log] {entry['data']} {entry['hora']} | {perfil} | {acao} {entidade}: {nome}")
+        # Mantém apenas os últimos _MAX registros
+        conn.execute(
+            "DELETE FROM audit_log WHERE id NOT IN "
+            "(SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)",
+            (_MAX,),
+        )
+        conn.commit()
+        print(f"[log] {now.strftime('%d/%m/%Y')} {now.strftime('%H:%M:%S')} "
+              f"| {perfil} | {acao} {entidade}: {nome}")
     except Exception as e:
         print(f"[log] erro ao registrar: {e}")
+    finally:
+        conn.close()
 
 
 def load_logs(limit: int = 500, perfil_minimo: str = "") -> list:
-    """Retorna os últimos registros em ordem decrescente.
-    Se perfil_minimo fornecido, filtra só ações de usuários com força >= perfil_minimo."""
-    entries = _load()
-    if perfil_minimo:
-        forca_min = _FORCA.get(perfil_minimo, 0)
-        entries = [e for e in entries if e.get("forca", 0) >= forca_min]
-    return list(reversed(entries[-limit:]))
+    conn = get_conn()
+    try:
+        if perfil_minimo:
+            forca_min = _FORCA.get(perfil_minimo, 0)
+            rows = conn.execute(
+                "SELECT * FROM audit_log WHERE forca>=? ORDER BY id DESC LIMIT ?",
+                (forca_min, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()

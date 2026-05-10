@@ -4,7 +4,7 @@ from nicegui import ui
 from ui.agenda_dialogs import conectar_agenda_dialog, novo_evento_dialog, ver_agenda_dialog
 from ui.obras_dialogs import nova_obra_dialog, ver_obras_dialog
 from ui.campo_dialogs import agenda_campo_dialog, historico_dialog
-from ui.processamento_dialogs import norte_magnetico_dialog, processamento_campo_dialog, processamento_campo_latlong_dialog, relatorio_campo_dialog
+from ui.processamento_dialogs import norte_magnetico_dialog, processamento_campo_dialog, processamento_campo_latlong_dialog, relatorio_campo_dialog, conversao_datum_dialog, kml_para_shapefile_dialog, gerador_kml_dialog
 from ui.tecnicos_dialogs import cadastrar_tecnico_dialog, ver_tecnicos_dialog
 from ui.modelos_dialogs import modelos_dialog
 from services.agenda import is_connected
@@ -304,6 +304,38 @@ def render_sidebar(state, on_filter, on_buscar_cliente, on_cadastrar_cliente=Non
                             ui.html("<span>Modelos de Documento</span>")
                         b.on("click", modelos_dialog)
 
+            # ── Log de Atividades ─────────────────────────────────────
+            if has_access(current_user_perfil(), "adm_log"):
+                with ui.element("div").style(
+                    "border-top:1px solid var(--dmc-b1);padding-top:4px;margin-top:4px;"
+                ):
+                    lg_hdr = ui.element("button").classes("dmc-sidebar-toggle").style(
+                        "justify-content:space-between;width:100%;"
+                    )
+                    with lg_hdr:
+                        ui.html(
+                            '<span style="font:10px var(--dmc-fm);color:var(--dmc-muted2);'
+                            'letter-spacing:.15em;text-transform:uppercase">Log</span>'
+                        )
+                        ui.html(
+                            '<span id="lg-arrow" class="material-icons" '
+                            'style="font-size:20px;color:var(--dmc-muted);transition:transform .25s">'
+                            'expand_more</span>'
+                        )
+                    lg_hdr.on("click", lambda: ui.run_javascript("lgToggle()"))
+
+                    lg_menu = ui.element("div").style(
+                        "overflow:hidden;transition:max-height .28s ease;max-height:0;"
+                    ).props('id="lg-menu"')
+
+                    with lg_menu:
+                        with ui.element("div").style("padding:4px 0 8px"):
+                            b = ui.element("button").classes("dmc-sidebar-item")
+                            with b:
+                                ui.html('<span class="material-icons" style="font-size:15px;color:#60A5FA;flex-shrink:0">history</span>')
+                                ui.html("<span>Log de Atividades</span>")
+                            b.on("click", lambda: ui.run_javascript("window.open('/log','_blank','noopener,noreferrer')"))
+
             # ── Processamento ─────────────────────────────────────────
             with ui.element("div").style(
                 "border-top:1px solid var(--dmc-b1);padding-top:4px;margin-top:4px;"
@@ -346,6 +378,55 @@ def render_sidebar(state, on_filter, on_buscar_cliente, on_cadastrar_cliente=Non
                             ui.html('<span class="material-icons" style="font-size:15px;color:#A78BFA;flex-shrink:0">my_location</span>')
                             ui.html("<span>Campo LatLon → Plano Local</span>")
                         b3.on("click", processamento_campo_latlong_dialog)
+
+                        b4 = ui.element("button").classes("dmc-sidebar-item")
+                        with b4:
+                            ui.html('<span class="material-icons" style="font-size:15px;color:#06B6D4;flex-shrink:0">compare_arrows</span>')
+                            ui.html("<span>Conversão de Datum</span>")
+                        b4.on("click", conversao_datum_dialog)
+
+                        b5 = ui.element("button").classes("dmc-sidebar-item")
+                        with b5:
+                            ui.html('<span class="material-icons" style="font-size:15px;color:#34D399;flex-shrink:0">map</span>')
+                            ui.html("<span>KML/KMZ → Shapefile</span>")
+                        b5.on("click", kml_para_shapefile_dialog)
+
+                        b6 = ui.element("button").classes("dmc-sidebar-item")
+                        with b6:
+                            ui.html('<span class="material-icons" style="font-size:15px;color:#FBBF24;flex-shrink:0">place</span>')
+                            ui.html("<span>Gerador de KML</span>")
+                        b6.on("click", gerador_kml_dialog)
+
+            # ── Financeiro ────────────────────────────────────────────
+            with ui.element("div").style(
+                "border-top:1px solid var(--dmc-b1);padding-top:4px;margin-top:4px;"
+            ):
+                fin_hdr = ui.element("button").classes("dmc-sidebar-toggle").style(
+                    "justify-content:space-between;width:100%;"
+                )
+                with fin_hdr:
+                    ui.html(
+                        '<span style="font:10px var(--dmc-fm);color:var(--dmc-muted2);'
+                        'letter-spacing:.15em;text-transform:uppercase">Financeiro</span>'
+                    )
+                    ui.html(
+                        '<span id="fin-arrow" class="material-icons" '
+                        'style="font-size:20px;color:var(--dmc-muted);transition:transform .25s">'
+                        'expand_more</span>'
+                    )
+                fin_hdr.on("click", lambda: ui.run_javascript("finToggle()"))
+
+                fin_menu = ui.element("div").style(
+                    "overflow:hidden;transition:max-height .28s ease;max-height:0;"
+                ).props('id="fin-menu"')
+
+                with fin_menu:
+                    with ui.element("div").style("padding:4px 0 8px"):
+                        b = ui.element("button").classes("dmc-sidebar-item")
+                        with b:
+                            ui.html('<span class="material-icons" style="font-size:15px;color:#4ADE80;flex-shrink:0">receipt_long</span>')
+                            ui.html("<span>NFS-e / Financeiro</span>")
+                        b.on("click", lambda: ui.run_javascript("window.open('/financeiro','_blank','noopener,noreferrer')"))
 
             # ── Links Rápidos ──────────────────────────────────────────
             with ui.element("div").style(
