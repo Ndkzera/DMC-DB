@@ -1,5 +1,6 @@
 """Página Financeiro / NFS-e — /financeiro"""
 
+from pathlib import Path
 from nicegui import ui
 
 from services.auth import current_user_label, current_user_perfil, is_authenticated, logout_user, mark_active, current_user_name
@@ -167,7 +168,7 @@ def financeiro_page():
     _auto_logout_btn.on("click", _logout)
     ui.timer(60, lambda: mark_active(_fi_email, _fi_nome, _fi_perfil))
 
-    from ui.financeiro_dialogs import emitir_nfse_dialog, config_nfse_dialog, ver_nfse_dialog, relatorio_financeiro_dialog, empresa_dialog
+    from ui.financeiro_dialogs import emitir_nfse_dialog, config_nfse_dialog, ver_nfse_dialog, relatorio_financeiro_dialog, empresa_dialog, certificado_dialog
 
     cfg = load_config()
 
@@ -199,6 +200,22 @@ def financeiro_page():
             ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary").style(
                 "color:#60A5FA;border-color:rgba(96,165,250,.3)"
             )
+
+            _cert_ok = bool(cfg.get('cert_path') and Path(cfg.get('cert_path', '')).exists())
+            _cert_dot_color = '#4ADE80' if _cert_ok else '#FBBF24'
+            with ui.element('div').style('position:relative;flex-shrink:0'):
+                ui.button(
+                    'Certificado', icon='verified_user',
+                    on_click=lambda: certificado_dialog(on_save=_refresh_cfg),
+                ).props('unelevated no-caps').classes('dmc-btn dmc-btn-secondary').style(
+                    'color:#A78BFA;border-color:rgba(167,139,250,.3)'
+                )
+                _cert_dot = ui.html(
+                    f'<div style="position:absolute;top:5px;right:5px;'
+                    f'width:7px;height:7px;border-radius:50%;pointer-events:none;'
+                    f'background:{_cert_dot_color};box-shadow:0 0 5px {_cert_dot_color}88"></div>'
+                )
+
             ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
                 "flat round dense"
             ).style("color:var(--dmc-muted)")
@@ -247,6 +264,13 @@ def financeiro_page():
             nonlocal cfg
             cfg = load_config()
             _cfg_ref['cfg'] = cfg
+            c_ok = bool(cfg.get('cert_path') and Path(cfg.get('cert_path', '')).exists())
+            c_color = '#4ADE80' if c_ok else '#FBBF24'
+            _cert_dot.set_content(
+                f'<div style="position:absolute;top:5px;right:5px;'
+                f'width:7px;height:7px;border-radius:50%;pointer-events:none;'
+                f'background:{c_color};box-shadow:0 0 5px {c_color}88"></div>'
+            )
             _refresh()
 
         def _refresh():
