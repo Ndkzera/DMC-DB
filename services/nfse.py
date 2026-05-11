@@ -63,16 +63,33 @@ def load_config() -> dict:
         except Exception:
             pass
     return {
-        'cnpj':          '',
-        'im':            '',
-        'cod_municipio': '',
-        'razao_social':  '',
-        'cert_path':     '',
-        'cert_senha':    '',
-        'ambiente':      'homologacao',
-        'aliquota_iss':  '5.00',
-        'serie':         '1',
-        'proximo_num':   1,
+        # Identificação da empresa
+        'cnpj':           '',
+        'im':             '',
+        'razao_social':   '',
+        'nome_fantasia':  '',
+        'ie':             '',
+        'regime_trib':    '',
+        # Endereço
+        'cep_empresa':    '',
+        'logradouro':     '',
+        'numero':         '',
+        'complemento':    '',
+        'bairro':         '',
+        'cidade':         '',
+        'uf':             '',
+        # Contato
+        'email_empresa':  '',
+        'telefone':       '',
+        # Fiscal / NFS-e
+        'cod_municipio':  '',
+        'aliquota_iss':   '5.00',
+        'serie':          '1',
+        'proximo_num':    1,
+        # Certificado
+        'cert_path':      '',
+        'cert_senha':     '',
+        'ambiente':       'homologacao',
     }
 
 

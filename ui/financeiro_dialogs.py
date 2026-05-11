@@ -33,6 +33,282 @@ def _row2(fn):
         fn()
 
 
+# ── Cadastro da Empresa ────────────────────────────────────────────────
+
+def empresa_dialog(on_save=None) -> None:
+    """Dialog completo de cadastro da empresa prestadora."""
+    cfg = load_config()
+    _st = dict(cfg)
+
+    with ui.dialog().props('persistent') as dlg, ui.card().style(
+        'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
+        'border-radius:18px!important;padding:0;'
+        'width:min(720px,97vw)!important;max-height:96vh;'
+        'display:flex;flex-direction:column;color:var(--dmc-text)!important;position:relative;'
+    ):
+        ui.button(icon='close', on_click=dlg.close).props('flat round dense').style(
+            'color:var(--dmc-muted);position:absolute;top:12px;right:12px;z-index:10;'
+        )
+
+        # ── Header ─────────────────────────────────────────────────────
+        with ui.element('div').style(
+            'padding:18px 24px;border-bottom:1px solid var(--dmc-b1);'
+            'display:flex;align-items:center;gap:14px;flex-shrink:0;padding-right:52px;'
+        ):
+            ui.html(
+                '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;'
+                'background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);'
+                'display:flex;align-items:center;justify-content:center;">'
+                '<span class="material-icons" style="font-size:20px;color:#60A5FA">business</span></div>'
+            )
+            with ui.element('div'):
+                ui.html('<div style="font:700 16px var(--dmc-fd);color:var(--dmc-text)">Cadastro da Empresa</div>')
+                ui.html('<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">Dados do prestador de serviço — usados automaticamente na emissão de NFS-e</div>')
+
+        with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:0'):
+
+            def _inp(label, key, placeholder='', mono=False, w='100%'):
+                _label(label)
+                inp = ui.input(value=str(_st.get(key, '') or ''), placeholder=placeholder).props(
+                    'borderless dense outlined'
+                ).style(
+                    f'width:{w};background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
+                    f'border-radius:8px;padding:0 12px;margin-bottom:12px;'
+                    f'font:{"var(--dmc-mono)" if mono else "var(--dmc-fm)"}'
+                )
+                inp.on('change', lambda e, k=key: _st.update({k: e.value or ''}))
+                return inp
+
+            # ── Seção 1: Identificação ──────────────────────────────────
+            ui.html(
+                '<div style="font:600 10px var(--dmc-mono);color:var(--dmc-muted2);letter-spacing:.14em;'
+                'text-transform:uppercase;border-top:1px solid var(--dmc-b1);padding-top:14px;'
+                'margin-bottom:14px;display:flex;align-items:center;gap:8px">'
+                '<span class="material-icons" style="font-size:13px">badge</span>Identificação</div>'
+            )
+
+            with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
+                with ui.element('div'):
+                    # CNPJ com botão de busca
+                    _label('CNPJ')
+                    with ui.element('div').style('display:flex;gap:6px;margin-bottom:12px'):
+                        cnpj_inp = ui.input(
+                            value=str(_st.get('cnpj', '') or ''),
+                            placeholder='00.000.000/0000-00'
+                        ).props('borderless dense outlined').style(
+                            'flex:1;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
+                            'border-radius:8px;padding:0 12px;font:var(--dmc-mono)'
+                        )
+                        cnpj_inp.on('change', lambda e: _st.update({'cnpj': e.value or ''}))
+                        cnpj_status = ui.html('<span></span>')
+
+                        async def _buscar_cnpj():
+                            raw = ''.join(c for c in (_st.get('cnpj') or '') if c.isdigit())
+                            if len(raw) != 14:
+                                ui.notify('CNPJ inválido (14 dígitos).', type='warning')
+                                return
+                            cnpj_status.set_content(
+                                '<span style="font:10px var(--dmc-mono);color:#FBBF24">Consultando...</span>'
+                            )
+                            try:
+                                import httpx
+                                async with httpx.AsyncClient(timeout=10) as client:
+                                    r = await client.get(
+                                        f'https://www.receitaws.com.br/v1/cnpj/{raw}',
+                                        headers={'Accept': 'application/json'},
+                                    )
+                                d = r.json()
+                                if d.get('status') == 'ERROR':
+                                    cnpj_status.set_content(
+                                        '<span style="font:10px var(--dmc-mono);color:#F87171">Não encontrado</span>'
+                                    )
+                                    return
+                                nome = (d.get('nome') or '').strip().upper()
+                                fantasia = (d.get('fantasia') or '').strip().upper()
+                                tel  = (d.get('telefone') or '').split('/')[0].strip()
+                                cep_r = ''.join(c for c in (d.get('cep') or '') if c.isdigit())
+                                _st.update({
+                                    'razao_social':  nome,
+                                    'nome_fantasia': fantasia,
+                                    'telefone':      tel,
+                                    'logradouro':    (d.get('logradouro') or '').upper(),
+                                    'numero':        d.get('numero') or '',
+                                    'complemento':   (d.get('complemento') or '').upper(),
+                                    'bairro':        (d.get('bairro') or '').upper(),
+                                    'cidade':        (d.get('municipio') or '').upper(),
+                                    'uf':            (d.get('uf') or '').upper(),
+                                    'cep_empresa':   cep_r[:5]+'-'+cep_r[5:] if len(cep_r)==8 else '',
+                                })
+                                _render_fields()
+                                cnpj_status.set_content(
+                                    '<span style="font:10px var(--dmc-mono);color:#4ADE80">✓ Preenchido</span>'
+                                )
+                            except Exception as ex:
+                                cnpj_status.set_content(
+                                    f'<span style="font:10px var(--dmc-mono);color:#F87171">Erro: {ex}</span>'
+                                )
+
+                        btn_cnpj = ui.element('button').classes('dmc-btn dmc-btn-secondary dmc-btn-sm').style('flex-shrink:0')
+                        with btn_cnpj:
+                            ui.html('<span class="material-icons" style="font-size:13px">search</span><span>Buscar</span>')
+                        btn_cnpj.on('click', _buscar_cnpj)
+
+                with ui.element('div'):
+                    _inp('Inscrição Municipal', 'im', 'Nº municipal', mono=True)
+
+            # área dos campos que podem ser preenchidos via busca CNPJ
+            fields_area = ui.element('div')
+
+            def _render_fields():
+                fields_area.clear()
+                with fields_area:
+                    _inp('Razão Social', 'razao_social', 'Nome jurídico da empresa')
+                    with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
+                        with ui.element('div'):
+                            _inp('Nome Fantasia', 'nome_fantasia', 'Nome comercial')
+                        with ui.element('div'):
+                            _inp('Inscrição Estadual', 'ie', 'Nº estadual ou ISENTO', mono=True)
+
+                    with ui.element('div').style('margin-bottom:12px'):
+                        _label('Regime Tributário')
+                        reg_atual = _st.get('regime_trib', '')
+                        with ui.element('div').style('display:flex;gap:8px;flex-wrap:wrap'):
+                            for val, lbl in [
+                                ('1', 'Simples Nacional'),
+                                ('2', 'Lucro Presumido'),
+                                ('3', 'Lucro Real'),
+                                ('5', 'MEI'),
+                            ]:
+                                checked = 'checked' if reg_atual == val else ''
+                                ui.html(
+                                    f'<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;'
+                                    f'background:var(--dmc-bg3);border:1px solid var(--dmc-b2);border-radius:8px;'
+                                    f'padding:7px 14px;font:12px var(--dmc-fm);color:var(--dmc-text);margin-bottom:12px">'
+                                    f'<input type="radio" name="emp-regime" value="{val}" '
+                                    f'style="accent-color:#60A5FA" {checked}> {lbl}</label>'
+                                )
+
+                    # ── Seção 2: Endereço ───────────────────────────────
+                    ui.html(
+                        '<div style="font:600 10px var(--dmc-mono);color:var(--dmc-muted2);letter-spacing:.14em;'
+                        'text-transform:uppercase;border-top:1px solid var(--dmc-b1);padding-top:14px;'
+                        'margin-bottom:14px;display:flex;align-items:center;gap:8px">'
+                        '<span class="material-icons" style="font-size:13px">location_on</span>Endereço</div>'
+                    )
+
+                    with ui.element('div').style('display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;margin-bottom:0'):
+                        with ui.element('div').style('min-width:0'):
+                            cep_inp2 = _inp('CEP', 'cep_empresa', '00000-000', mono=True)
+                        cep_btn = ui.element('button').classes('dmc-btn dmc-btn-secondary dmc-btn-sm').style('margin-bottom:12px;flex-shrink:0')
+                        with cep_btn:
+                            ui.html('<span class="material-icons" style="font-size:13px">search</span><span>Buscar</span>')
+
+                        async def _buscar_cep():
+                            raw = ''.join(c for c in (_st.get('cep_empresa') or '') if c.isdigit())
+                            if len(raw) != 8:
+                                ui.notify('CEP inválido (8 dígitos).', type='warning')
+                                return
+                            try:
+                                import httpx
+                                async with httpx.AsyncClient(timeout=8) as client:
+                                    r = await client.get(f'https://viacep.com.br/ws/{raw}/json/')
+                                d = r.json()
+                                if d.get('erro'):
+                                    ui.notify('CEP não encontrado.', type='warning')
+                                    return
+                                _st.update({
+                                    'logradouro': (d.get('logradouro') or '').upper(),
+                                    'bairro':     (d.get('bairro') or '').upper(),
+                                    'cidade':     (d.get('localidade') or '').upper(),
+                                    'uf':         (d.get('uf') or '').upper(),
+                                })
+                                _render_fields()
+                                ui.notify('Endereço preenchido.', type='positive')
+                            except Exception as ex:
+                                ui.notify(f'Erro ao buscar CEP: {ex}', type='negative')
+
+                        cep_btn.on('click', _buscar_cep)
+
+                    with ui.element('div').style('display:grid;grid-template-columns:2fr 1fr;gap:14px'):
+                        with ui.element('div'):
+                            _inp('Logradouro', 'logradouro', 'Rua / Avenida')
+                        with ui.element('div'):
+                            _inp('Número', 'numero', 'S/N')
+
+                    with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
+                        with ui.element('div'):
+                            _inp('Complemento', 'complemento', 'Sala, bloco, andar...')
+                        with ui.element('div'):
+                            _inp('Bairro', 'bairro', '')
+
+                    with ui.element('div').style('display:grid;grid-template-columns:2fr 1fr;gap:14px'):
+                        with ui.element('div'):
+                            _inp('Cidade', 'cidade', '')
+                        with ui.element('div'):
+                            _inp('UF', 'uf', 'SC')
+
+                    # ── Seção 3: Contato ────────────────────────────────
+                    ui.html(
+                        '<div style="font:600 10px var(--dmc-mono);color:var(--dmc-muted2);letter-spacing:.14em;'
+                        'text-transform:uppercase;border-top:1px solid var(--dmc-b1);padding-top:14px;'
+                        'margin-bottom:14px;display:flex;align-items:center;gap:8px">'
+                        '<span class="material-icons" style="font-size:13px">contact_mail</span>Contato</div>'
+                    )
+
+                    with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
+                        with ui.element('div'):
+                            _inp('E-mail da empresa', 'email_empresa', 'contato@empresa.com.br')
+                        with ui.element('div'):
+                            _inp('Telefone', 'telefone', '(00) 00000-0000', mono=True)
+
+                    # ── Seção 4: Fiscal ─────────────────────────────────
+                    ui.html(
+                        '<div style="font:600 10px var(--dmc-mono);color:var(--dmc-muted2);letter-spacing:.14em;'
+                        'text-transform:uppercase;border-top:1px solid var(--dmc-b1);padding-top:14px;'
+                        'margin-bottom:14px;display:flex;align-items:center;gap:8px">'
+                        '<span class="material-icons" style="font-size:13px">receipt_long</span>Fiscal / NFS-e</div>'
+                    )
+
+                    with ui.element('div').style('display:grid;grid-template-columns:2fr 1fr 1fr;gap:14px'):
+                        with ui.element('div'):
+                            _inp('Código IBGE do Município', 'cod_municipio', 'Ex: 4205407', mono=True)
+                        with ui.element('div'):
+                            _inp('Alíquota ISS (%)', 'aliquota_iss', '5.00', mono=True)
+                        with ui.element('div'):
+                            _inp('Série DPS', 'serie', '1', mono=True)
+
+            _render_fields()
+
+        # ── Rodapé ─────────────────────────────────────────────────────
+        with ui.element('div').style(
+            'padding:14px 24px;border-top:1px solid var(--dmc-b1);'
+            'display:flex;justify-content:flex-end;gap:10px;flex-shrink:0'
+        ):
+            ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
+
+            async def _salvar():
+                regime = await ui.run_javascript(
+                    "document.querySelector('input[name=\"emp-regime\"]:checked')?.value || ''"
+                )
+                _st['regime_trib'] = regime
+                try:
+                    cfg_atual = load_config()
+                    cfg_atual.update(_st)
+                    save_config(cfg_atual)
+                    ui.notify('Dados da empresa salvos.', type='positive')
+                    if on_save:
+                        on_save()
+                    dlg.close()
+                except Exception as ex:
+                    ui.notify(f'Erro ao salvar: {ex}', type='negative')
+
+            ui.button('Salvar Empresa', icon='save', on_click=_salvar).props(
+                'unelevated no-caps'
+            ).classes('dmc-btn dmc-btn-primary')
+
+    dlg.open()
+
+
 # ── Configuração ───────────────────────────────────────────────────────
 
 def config_nfse_dialog(on_save=None) -> None:
@@ -269,6 +545,41 @@ def emitir_nfse_dialog(on_success=None) -> None:
                 )
 
         with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0'):
+
+            # ── Card do Prestador (readonly) ────────────────────────────
+            cnpj_d = cfg.get('cnpj') or '—'
+            im_d   = cfg.get('im') or '—'
+            rs_d   = cfg.get('razao_social') or '—'
+            nf_d   = cfg.get('nome_fantasia') or ''
+            ui.html(
+                '<div style="background:rgba(74,222,128,.04);border:1px solid rgba(74,222,128,.15);'
+                'border-radius:10px;padding:12px 16px;margin-bottom:16px">'
+                '<div style="font:600 9px var(--dmc-mono);color:var(--dmc-muted2);text-transform:uppercase;'
+                'letter-spacing:.12em;margin-bottom:10px;display:flex;align-items:center;gap:6px">'
+                '<span class="material-icons" style="font-size:12px;color:#4ADE80">business</span>'
+                'Prestador (sua empresa)</div>'
+                '<div style="display:grid;grid-template-columns:auto auto 1fr;gap:8px 28px;align-items:start">'
+                # CNPJ
+                '<div>'
+                '<div style="font:9px var(--dmc-mono);color:var(--dmc-muted2);text-transform:uppercase;'
+                'letter-spacing:.06em;margin-bottom:3px">CNPJ</div>'
+                f'<div style="font:600 13px var(--dmc-mono);color:var(--dmc-text)">{cnpj_d}</div>'
+                '</div>'
+                # IM
+                '<div>'
+                '<div style="font:9px var(--dmc-mono);color:var(--dmc-muted2);text-transform:uppercase;'
+                'letter-spacing:.06em;margin-bottom:3px">Insc. Municipal</div>'
+                f'<div style="font:600 13px var(--dmc-mono);color:var(--dmc-text)">{im_d}</div>'
+                '</div>'
+                # Razão Social
+                '<div>'
+                '<div style="font:9px var(--dmc-mono);color:var(--dmc-muted2);text-transform:uppercase;'
+                'letter-spacing:.06em;margin-bottom:3px">Razão Social</div>'
+                f'<div style="font:500 13px var(--dmc-fm);color:var(--dmc-text)">{rs_d}'
+                + (f'<span style="font:11px var(--dmc-fm);color:var(--dmc-muted2);margin-left:8px">'
+                   f'({nf_d})</span>' if nf_d else '')
+                + '</div></div></div></div>'
+            )
 
             # ── Tomador ────────────────────────────────────────────────
             ui.html(

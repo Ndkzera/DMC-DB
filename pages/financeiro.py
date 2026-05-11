@@ -167,7 +167,7 @@ def financeiro_page():
     _auto_logout_btn.on("click", _logout)
     ui.timer(60, lambda: mark_active(_fi_email, _fi_nome, _fi_perfil))
 
-    from ui.financeiro_dialogs import emitir_nfse_dialog, config_nfse_dialog, ver_nfse_dialog, relatorio_financeiro_dialog
+    from ui.financeiro_dialogs import emitir_nfse_dialog, config_nfse_dialog, ver_nfse_dialog, relatorio_financeiro_dialog, empresa_dialog
 
     cfg = load_config()
 
@@ -193,6 +193,12 @@ def financeiro_page():
                 f'color:{env_color}">{env_label}</span>'
             )
             ui.html('<div class="fi-spacer"></div>')
+            ui.button(
+                "Empresa", icon="business",
+                on_click=lambda: empresa_dialog(on_save=_refresh),
+            ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary").style(
+                "color:#60A5FA;border-color:rgba(96,165,250,.3)"
+            )
             ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
                 "flat round dense"
             ).style("color:var(--dmc-muted)")
