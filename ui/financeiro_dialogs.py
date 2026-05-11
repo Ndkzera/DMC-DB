@@ -416,11 +416,6 @@ def certificado_dialog(on_save=None) -> None:
 
             ui.html(
                 f'<div id="{_dz_id}"'
-                f' ondragover="event.preventDefault();this.style.borderColor=\'#A78BFA\'"'
-                f' ondragleave="this.style.borderColor=\'var(--dmc-b2)\'"'
-                f' ondrop="event.preventDefault();this.style.borderColor=\'var(--dmc-b2)\';'
-                f'_dmcCertFile(event.dataTransfer.files[0],\'{_dz_id}\')"'
-                f' onclick="document.getElementById(\'{_fi_id}\').click()"'
                 f' style="border:2px dashed var(--dmc-b2);border-radius:12px;'
                 f'background:var(--dmc-bg3);padding:28px 20px;'
                 f'display:flex;flex-direction:column;align-items:center;gap:8px;'
@@ -429,26 +424,7 @@ def certificado_dialog(on_save=None) -> None:
                 f'<div style="font:600 12px var(--dmc-fd);color:var(--dmc-text)">Arraste ou clique para selecionar</div>'
                 f'<div id="{_dz_id}-name" style="font:11px var(--dmc-mono);color:var(--dmc-muted2)">.pfx · .p12</div>'
                 f'</div>'
-                f'<input type="file" id="{_fi_id}" accept=".pfx,.p12" style="display:none"'
-                f' onchange="_dmcCertFile(this.files[0],\'{_dz_id}\')">'
-            )
-
-            ui.add_body_html(
-                '<script>'
-                'if(!window._dmcCertFile){'
-                'window._dmcCertFile=function(file,dzId){'
-                'if(!file)return;'
-                'var nm=document.getElementById(dzId+"-name");'
-                'if(nm)nm.textContent=file.name;'
-                'var r=new FileReader();'
-                'r.onload=function(ev){'
-                'var b64=ev.target.result.split(",")[1];'
-                'emitEvent("cert_file_ready",{name:file.name,data:b64,size:file.size});'
-                '};'
-                'r.readAsDataURL(file);'
-                '}'
-                '}'
-                '</script>'
+                f'<input type="file" id="{_fi_id}" accept=".pfx,.p12" style="display:none">'
             )
 
             async def _on_cert_file(e):
@@ -472,6 +448,33 @@ def certificado_dialog(on_save=None) -> None:
                 ui.notify(f'"{name}" carregado com sucesso.', type='positive')
 
             ui.on('cert_file_ready', _on_cert_file)
+
+            async def _setup_dz():
+                await ui.run_javascript(
+                    f'(function(){{'
+                    f'var dz=document.getElementById("{_dz_id}");'
+                    f'var fi=document.getElementById("{_fi_id}");'
+                    f'if(!dz||!fi)return;'
+                    f'function hf(file){{'
+                    f'if(!file)return;'
+                    f'var nm=document.getElementById("{_dz_id}-name");'
+                    f'if(nm)nm.textContent=file.name;'
+                    f'var r=new FileReader();'
+                    f'r.onload=function(ev){{'
+                    f'var b64=ev.target.result.split(",")[1];'
+                    f'emitEvent("cert_file_ready",{{name:file.name,data:b64,size:file.size}});'
+                    f'}};'
+                    f'r.readAsDataURL(file);'
+                    f'}}'
+                    f'dz.addEventListener("dragover",function(e){{e.preventDefault();dz.style.borderColor="#A78BFA";}});'
+                    f'dz.addEventListener("dragleave",function(){{dz.style.borderColor="";}});'
+                    f'dz.addEventListener("drop",function(e){{e.preventDefault();dz.style.borderColor="";hf(e.dataTransfer.files[0]);}});'
+                    f'dz.addEventListener("click",function(){{fi.click();}});'
+                    f'fi.addEventListener("change",function(){{if(fi.files[0])hf(fi.files[0]);}});'
+                    f'}})();'
+                )
+
+            ui.timer(0.2, _setup_dz, once=True)
 
             _section('Senha do Certificado')
             _pw_id = f'cert-pw-{id(dlg)}'
