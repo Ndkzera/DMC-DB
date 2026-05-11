@@ -408,15 +408,100 @@ def config_nfse_dialog(on_save=None) -> None:
 
             _section('Certificado Digital (.pfx / .p12)')
 
-            _label('Caminho do arquivo (.pfx ou .p12)')
-            cert_inp = ui.input(value=_st.get('cert_path', ''), placeholder='/caminho/para/cert.pfx').props(
-                'borderless dense outlined'
-            ).style(
-                'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                'border-radius:8px;padding:0 12px;margin-bottom:12px;font:var(--dmc-mono)'
-            )
-            cert_inp.on('change', lambda e: _st.update({'cert_path': e.value or ''}))
+            # ── Card de status do certificado atual ─────────────────────
+            cert_card = ui.element('div').style('margin-bottom:10px')
 
+            def _render_cert_card():
+                cert_card.clear()
+                path = _st.get('cert_path', '')
+                with cert_card:
+                    if path and Path(path).exists():
+                        fname = Path(path).name
+                        try:
+                            kb = Path(path).stat().st_size / 1024
+                            fsize = f'{kb:.1f} KB'
+                        except Exception:
+                            fsize = ''
+                        ui.html(
+                            f'<div style="background:rgba(74,222,128,.05);'
+                            f'border:1px solid rgba(74,222,128,.22);border-radius:8px;'
+                            f'padding:10px 14px;display:flex;align-items:center;gap:12px">'
+                            f'<span class="material-icons" '
+                            f'style="color:#4ADE80;font-size:22px;flex-shrink:0">lock</span>'
+                            f'<div style="flex:1;min-width:0">'
+                            f'<div style="font:600 12px var(--dmc-mono);color:var(--dmc-text);'
+                            f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{fname}</div>'
+                            + (f'<div style="font:10px var(--dmc-mono);color:var(--dmc-muted2);margin-top:2px">{fsize}</div>' if fsize else '')
+                            + f'</div></div>'
+                        )
+                    elif path:
+                        fname = Path(path).name or path
+                        ui.html(
+                            f'<div style="background:rgba(248,113,113,.05);'
+                            f'border:1px solid rgba(248,113,113,.22);border-radius:8px;'
+                            f'padding:10px 14px;display:flex;align-items:center;gap:10px">'
+                            f'<span class="material-icons" style="color:#F87171;font-size:18px;flex-shrink:0">error</span>'
+                            f'<div style="font:11px var(--dmc-mono);color:#F87171;overflow:hidden;'
+                            f'text-overflow:ellipsis;white-space:nowrap">Arquivo não encontrado: {fname}</div>'
+                            f'</div>'
+                        )
+                    else:
+                        ui.html(
+                            '<div style="padding:2px 0;font:11px var(--dmc-mono);color:var(--dmc-muted2)">'
+                            '<span class="material-icons" style="font-size:13px;vertical-align:middle;margin-right:4px">info</span>'
+                            'Nenhum certificado configurado</div>'
+                        )
+
+            _render_cert_card()
+
+            cert_status = ui.html('<div style="min-height:20px;margin-bottom:6px"></div>')
+
+            # ── Handler de upload ───────────────────────────────────────
+            async def _on_cert_upload(e):
+                certs_dir = Path('data') / 'certs'
+                certs_dir.mkdir(parents=True, exist_ok=True)
+                dest = certs_dir / e.name
+                dest.write_bytes(e.content.read())
+                _st['cert_path'] = str(dest)
+                _render_cert_card()
+                cert_status.set_content(
+                    f'<div style="font:11px var(--dmc-mono);color:#4ADE80">'
+                    f'✓ "{e.name}" salvo em data/certs/ — insira a senha e clique em Testar.</div>'
+                )
+                ui.notify(f'Certificado "{e.name}" enviado.', type='positive')
+
+            def _remove_cert():
+                _st['cert_path'] = ''
+                _render_cert_card()
+                cert_status.set_content(
+                    '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2)">Certificado removido da configuração.</div>'
+                )
+
+            # ── Linha: upload + remover ─────────────────────────────────
+            with ui.element('div').style('display:flex;gap:8px;align-items:center;margin-bottom:12px'):
+                with ui.element('div').style(
+                    'flex:1;border:1.5px dashed var(--dmc-b2);border-radius:10px;'
+                    'background:var(--dmc-bg3);display:flex;align-items:center;gap:10px;'
+                    'padding:8px 14px;min-width:0'
+                ):
+                    ui.html(
+                        '<span class="material-icons" style="font-size:18px;color:var(--dmc-muted2);flex-shrink:0">'
+                        'upload_file</span>'
+                        '<span style="font:11px var(--dmc-fm);color:var(--dmc-muted2)">.pfx · .p12</span>'
+                    )
+                    ui.upload(
+                        on_upload=_on_cert_upload,
+                        auto_upload=True,
+                        max_files=1,
+                    ).props('accept=".pfx,.p12,.cer" flat no-thumbnails label="Selecionar"').style(
+                        'margin-left:auto;flex-shrink:0'
+                    )
+
+                ui.button('Remover', icon='delete_outline', on_click=_remove_cert).props(
+                    'unelevated no-caps'
+                ).classes('dmc-btn dmc-btn-danger').style('flex-shrink:0')
+
+            # ── Senha ───────────────────────────────────────────────────
             _label('Senha do certificado')
             _cert_pw_val = _st.get('cert_senha', '')
             with ui.element('div').style('position:relative;margin-bottom:12px;width:100%'):
@@ -447,8 +532,6 @@ def config_nfse_dialog(on_save=None) -> None:
                         + ('visibility' if state == 'text' else 'visibility_off') + '</span>'
                     )
                 _pw_tog.on('click', _pw_toggle)
-
-            cert_status = ui.html('<div style="min-height:18px"></div>')
 
             async def _test_cert():
                 path  = _st.get('cert_path', '')

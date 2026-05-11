@@ -8,6 +8,12 @@ token.json
 *.env
 .env
 
+# Certificados digitais (nunca subir no repositório)
+data/certs/*.pfx
+data/certs/*.p12
+data/certs/*.cer
+data/nfse_config.json
+
 # Python
 __pycache__/
 *.py[cod]
