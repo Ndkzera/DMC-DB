@@ -2,7 +2,8 @@
 
 from nicegui import ui
 
-from services.auth import current_user_label, current_user_perfil, is_authenticated
+from services.auth import current_user_label, current_user_perfil, is_authenticated, logout_user, mark_active, current_user_name
+from nicegui import app as _fapp
 from services.acesso import has_access
 from services.nfse import list_nfse, load_config, _DEPS_OK
 from ui.styles import BOOTSTRAP_CDN, CSS, UTILS_JS
@@ -150,6 +151,20 @@ def financeiro_page():
     ui.add_head_html(f"<style>{CSS}</style>")
     ui.add_head_html(UTILS_JS)
     ui.add_head_html(_PAGE_CSS)
+
+    _fi_nome  = current_user_name()
+    _fi_email = _fapp.storage.user.get("dmc_user_email", "")
+    mark_active(_fi_email, _fi_nome)
+
+    def _logout():
+        logout_user()
+        ui.navigate.to("/login")
+
+    _auto_logout_btn = ui.element("button").props('id="dmc-auto-logout"').style(
+        "display:none;position:absolute;pointer-events:none"
+    )
+    _auto_logout_btn.on("click", _logout)
+    ui.timer(60, lambda: mark_active(_fi_email, _fi_nome))
 
     from ui.financeiro_dialogs import emitir_nfse_dialog, config_nfse_dialog, ver_nfse_dialog, relatorio_financeiro_dialog
 

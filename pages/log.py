@@ -1,8 +1,8 @@
 """Página de Log de Atividades — /log"""
 
-from nicegui import ui
+from nicegui import app as _lgapp, ui
 
-from services.auth import current_user_label, current_user_perfil, is_authenticated
+from services.auth import current_user_label, current_user_perfil, is_authenticated, logout_user, mark_active, current_user_name
 from services.acesso import has_access
 from services.log import load_logs, ACOES, ENTIDADES
 from ui.styles import BOOTSTRAP_CDN, CSS, UTILS_JS
@@ -190,6 +190,20 @@ def log_page():
     ui.add_head_html(f"<style>{CSS}</style>")
     ui.add_head_html(UTILS_JS)
     ui.add_head_html(_PAGE_CSS)
+
+    _lg_nome  = current_user_name()
+    _lg_email = _lgapp.storage.user.get("dmc_user_email", "")
+    mark_active(_lg_email, _lg_nome)
+
+    def _logout():
+        logout_user()
+        ui.navigate.to("/login")
+
+    _auto_logout_btn = ui.element("button").props('id="dmc-auto-logout"').style(
+        "display:none;position:absolute;pointer-events:none"
+    )
+    _auto_logout_btn.on("click", _logout)
+    ui.timer(60, lambda: mark_active(_lg_email, _lg_nome))
 
     _state = {"busca": "", "acao": "todos", "entidade": "todos"}
 

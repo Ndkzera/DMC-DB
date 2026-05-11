@@ -690,6 +690,57 @@ async function buscarDoc(){
     }catch(e){setDocStatus('Erro na consulta','#F87171');}
   }
 }
+
+/* ── Auto-logout por inatividade (60 min) ─────────────────────────── */
+(function(){
+  var WARN_MS = 55 * 60 * 1000;
+  var OUT_MS  = 60 * 60 * 1000;
+  window._dmcLastAct = Date.now();
+  ['mousemove','keydown','mousedown','touchstart','scroll'].forEach(function(ev){
+    document.addEventListener(ev, function(){ window._dmcLastAct = Date.now(); }, {passive:true});
+  });
+  window._dmcIdleStay = function(){
+    window._dmcLastAct = Date.now();
+    var w = document.getElementById('dmc-idle-warn');
+    if (w) w.remove();
+  };
+  window._dmcIdleOut = function(){
+    var b = document.getElementById('dmc-auto-logout');
+    if (b) b.click(); else window.location.href = '/login';
+  };
+  var _warnShown = false;
+  setInterval(function(){
+    var idle = Date.now() - window._dmcLastAct;
+    if (idle >= OUT_MS) { window._dmcIdleOut(); return; }
+    if (idle >= WARN_MS && !_warnShown) {
+      _warnShown = true;
+      var el = document.createElement('div');
+      el.id = 'dmc-idle-warn';
+      el.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.86);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;';
+      el.innerHTML =
+        '<div style="background:var(--dmc-bg2,#0C130C);border:1px solid rgba(251,191,36,.25);border-radius:14px;padding:28px 32px;max-width:360px;width:90%;text-align:center;box-shadow:0 24px 64px rgba(0,0,0,.6)">' +
+        '<span class="material-icons" style="font-size:44px;color:#FBBF24;display:block;margin-bottom:12px">timer</span>' +
+        '<div style="font:700 15px \'Syne\',sans-serif;color:var(--dmc-text,#DCE8DC);margin-bottom:8px">Sessão prestes a expirar</div>' +
+        '<div style="font:12px \'Inter\',sans-serif;color:var(--dmc-muted,#8BAA8B);margin-bottom:20px">Sem atividade detectada. Logout automático em<br>' +
+        '<span id="dmc-idle-cd" style="font:700 24px \'DM Mono\',monospace;color:#FBBF24;display:block;margin-top:10px">5:00</span></div>' +
+        '<div style="display:flex;gap:10px;justify-content:center">' +
+        '<button onclick="_dmcIdleStay()" style="background:var(--dmc-green,#4ADE80);color:#060A06;border:none;border-radius:9px;padding:8px 20px;font:700 12px \'DM Mono\',monospace;cursor:pointer;letter-spacing:.05em">Continuar sessão</button>' +
+        '<button onclick="_dmcIdleOut()" style="background:rgba(248,113,113,.1);color:#F87171;border:1px solid rgba(248,113,113,.3);border-radius:9px;padding:8px 20px;font:700 12px \'DM Mono\',monospace;cursor:pointer;letter-spacing:.05em">Sair agora</button>' +
+        '</div></div>';
+      document.body.appendChild(el);
+    }
+    if (idle < WARN_MS && _warnShown) {
+      _warnShown = false;
+      var w = document.getElementById('dmc-idle-warn');
+      if (w) w.remove();
+    }
+    var cd = document.getElementById('dmc-idle-cd');
+    if (cd) {
+      var rem = Math.max(0, Math.round((OUT_MS - idle) / 1000));
+      cd.textContent = Math.floor(rem/60) + ':' + ('0' + (rem%60)).slice(-2);
+    }
+  }, 5000);
+})();
 </script>
 """
 
@@ -725,6 +776,10 @@ HEADER_HTML = """
   <div style="flex:1"></div>
 
   <div id="dmc-user-slot"></div>
+
+  <div style="width:1px;height:24px;background:var(--dmc-b1);margin:0 8px"></div>
+
+  <div id="dmc-active-slot"></div>
 
   <div style="width:1px;height:24px;background:var(--dmc-b1);margin:0 8px"></div>
 

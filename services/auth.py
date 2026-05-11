@@ -1,6 +1,7 @@
 """Autenticação — usuários em SQLite, senhas com sha256."""
 
 import hashlib
+import time
 import uuid
 from nicegui import app
 from services.database import get_conn, _insert_usuario
@@ -112,15 +113,46 @@ def is_authenticated() -> bool:
     return bool(app.storage.user.get("dmc_logged_in"))
 
 
+def mark_active(email: str, nome: str) -> None:
+    """Registra/renova sessão ativa em storage.general (compartilhado entre todos)."""
+    online: dict = app.storage.general.get("online", {})
+    online[email] = {"nome": nome, "ts": time.time()}
+    app.storage.general["online"] = online
+
+
+def mark_inactive(email: str) -> None:
+    """Remove sessão ativa do storage.general."""
+    online: dict = app.storage.general.get("online", {})
+    online.pop(email, None)
+    app.storage.general["online"] = online
+
+
+def get_active_users() -> list[dict]:
+    """Retorna usuários com heartbeat nos últimos 2 minutos."""
+    cutoff = time.time() - 120
+    return [
+        v for v in app.storage.general.get("online", {}).values()
+        if v.get("ts", 0) >= cutoff
+    ]
+
+
+def get_active_count() -> int:
+    return len(get_active_users())
+
+
 def login_user(user: dict) -> None:
     app.storage.user["dmc_logged_in"] = True
     app.storage.user["dmc_user_nome"]   = user.get("nome", "")
     app.storage.user["dmc_user_email"]  = user.get("email", "")
     app.storage.user["dmc_user_perfil"] = user.get("perfil", "FUNCIONÁRIO")
     app.storage.user["dmc_user_admin"]  = user.get("admin", False)
+    mark_active(user.get("email", ""), user.get("nome", ""))
 
 
 def logout_user() -> None:
+    email = app.storage.user.get("dmc_user_email", "")
+    if email:
+        mark_inactive(email)
     app.storage.user["dmc_logged_in"] = False
     for k in ("dmc_user_nome", "dmc_user_email", "dmc_user_perfil", "dmc_user_admin"):
         app.storage.user.pop(k, None)

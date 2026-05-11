@@ -7,7 +7,7 @@ from pathlib import Path
 from nicegui import app as _app, ui
 
 from config import ROOT_DIR, TRASH_DIR
-from services.auth import check_login, current_user_label, current_user_perfil, is_authenticated
+from services.auth import check_login, current_user_label, current_user_perfil, is_authenticated, logout_user, mark_active, current_user_name
 from services.acesso import has_access
 from services.files import cat, fmt_size, read_trash_meta
 from services.log import log_action
@@ -218,6 +218,20 @@ def lixeira_page():
     ui.add_head_html(f"<style>{CSS}</style>")
     ui.add_head_html(UTILS_JS)
     ui.add_head_html(_PAGE_CSS)
+
+    _lx_nome  = current_user_name()
+    _lx_email = _app.storage.user.get("dmc_user_email", "")
+    mark_active(_lx_email, _lx_nome)
+
+    def _logout():
+        logout_user()
+        ui.navigate.to("/login")
+
+    _auto_logout_btn = ui.element("button").props('id="dmc-auto-logout"').style(
+        "display:none;position:absolute;pointer-events:none"
+    )
+    _auto_logout_btn.on("click", _logout)
+    ui.timer(60, lambda: mark_active(_lx_email, _lx_nome))
 
     view_state = {"v": "list"}
     dlg_state  = {"on_confirm": None}

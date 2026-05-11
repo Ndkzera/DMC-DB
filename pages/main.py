@@ -108,14 +108,18 @@ def main_page():
     ui.add_body_html(DRAG_DROP_HTML)
     inject_tecnicos_js()
 
-    from services.auth import logout_user, current_user_name
+    from services.auth import logout_user, current_user_name, mark_active, get_active_count
+    from nicegui import app as _app
 
     def _logout():
         logout_user()
         ui.navigate.to("/login")
 
+    nome  = current_user_name()
+    email = _app.storage.user.get("dmc_user_email", "")
+    mark_active(email, nome)
+
     with ui.teleport("#dmc-user-slot"):
-        nome = current_user_name()
         ui.html(
             f'<div style="display:flex;align-items:center;gap:7px">'
             f'<span class="material-icons" style="font-size:15px;color:var(--dmc-muted2)">person</span>'
@@ -124,10 +128,36 @@ def main_page():
             f'</div>'
         )
 
+    with ui.teleport("#dmc-active-slot"):
+        active_el = ui.html("")
+
+    def _update_active():
+        cnt = get_active_count()
+        active_el.set_content(
+            f'<div style="display:flex;align-items:center;gap:5px;cursor:default" title="Membros online">'
+            f'<span class="material-icons" style="font-size:14px;color:var(--dmc-muted2)">people</span>'
+            f'<span style="font:500 11px \'DM Mono\',monospace;color:var(--dmc-muted2);'
+            f'letter-spacing:.04em">{cnt}</span>'
+            f'</div>'
+        )
+
+    _update_active()
+
+    def _heartbeat():
+        mark_active(email, nome)
+        _update_active()
+
+    ui.timer(60, _heartbeat)
+
     with ui.teleport("#dmc-logout-slot"):
         ui.button(icon="logout", on_click=_logout).props('flat round dense').tooltip("Sair").style(
             "color:#527A52;font-size:18px;"
         )
+
+    auto_logout_btn = ui.element("button").props('id="dmc-auto-logout"').style(
+        "display:none;position:absolute;pointer-events:none"
+    )
+    auto_logout_btn.on("click", _logout)
 
     refresh_btn = ui.element("button").props('id="dmc-refresh-btn"').style("display:none")
     refresh_btn.on("click", state.render)
