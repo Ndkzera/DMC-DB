@@ -720,12 +720,12 @@ async function buscarDoc(){
       el.innerHTML =
         '<div style="background:var(--dmc-bg2,#0C130C);border:1px solid rgba(251,191,36,.25);border-radius:14px;padding:28px 32px;max-width:360px;width:90%;text-align:center;box-shadow:0 24px 64px rgba(0,0,0,.6)">' +
         '<span class="material-icons" style="font-size:44px;color:#FBBF24;display:block;margin-bottom:12px">timer</span>' +
-        '<div style="font:700 15px \'Syne\',sans-serif;color:var(--dmc-text,#DCE8DC);margin-bottom:8px">Sessão prestes a expirar</div>' +
-        '<div style="font:12px \'Inter\',sans-serif;color:var(--dmc-muted,#8BAA8B);margin-bottom:20px">Sem atividade detectada. Logout automático em<br>' +
-        '<span id="dmc-idle-cd" style="font:700 24px \'DM Mono\',monospace;color:#FBBF24;display:block;margin-top:10px">5:00</span></div>' +
+        '<div style="font:700 15px Syne,sans-serif;color:var(--dmc-text,#DCE8DC);margin-bottom:8px">Sessão prestes a expirar</div>' +
+        '<div style="font:12px Inter,sans-serif;color:var(--dmc-muted,#8BAA8B);margin-bottom:20px">Sem atividade detectada. Logout automático em<br>' +
+        '<span id="dmc-idle-cd" style="font:700 24px monospace;color:#FBBF24;display:block;margin-top:10px">5:00</span></div>' +
         '<div style="display:flex;gap:10px;justify-content:center">' +
-        '<button onclick="_dmcIdleStay()" style="background:var(--dmc-green,#4ADE80);color:#060A06;border:none;border-radius:9px;padding:8px 20px;font:700 12px \'DM Mono\',monospace;cursor:pointer;letter-spacing:.05em">Continuar sessão</button>' +
-        '<button onclick="_dmcIdleOut()" style="background:rgba(248,113,113,.1);color:#F87171;border:1px solid rgba(248,113,113,.3);border-radius:9px;padding:8px 20px;font:700 12px \'DM Mono\',monospace;cursor:pointer;letter-spacing:.05em">Sair agora</button>' +
+        '<button onclick="_dmcIdleStay()" style="background:var(--dmc-green,#4ADE80);color:#060A06;border:none;border-radius:9px;padding:8px 20px;font:700 12px monospace;cursor:pointer;letter-spacing:.05em">Continuar sessão</button>' +
+        '<button onclick="_dmcIdleOut()" style="background:rgba(248,113,113,.1);color:#F87171;border:1px solid rgba(248,113,113,.3);border-radius:9px;padding:8px 20px;font:700 12px monospace;cursor:pointer;letter-spacing:.05em">Sair agora</button>' +
         '</div></div>';
       document.body.appendChild(el);
     }
