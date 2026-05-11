@@ -39,6 +39,7 @@ def empresa_dialog(on_save=None) -> None:
     """Dialog completo de cadastro da empresa prestadora."""
     cfg = load_config()
     _st = dict(cfg)
+    _ireg: dict = {}  # key → html input id (para leitura em batch via JS)
 
     with ui.dialog().props('persistent') as dlg, ui.card().style(
         'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
@@ -67,17 +68,32 @@ def empresa_dialog(on_save=None) -> None:
 
         with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:0'):
 
-            def _inp(label, key, placeholder='', mono=False, w='100%'):
-                _label(label)
-                inp = ui.input(value=str(_st.get(key, '') or ''), placeholder=placeholder).props(
-                    'borderless dense outlined'
-                ).style(
-                    f'width:{w};background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                    f'border-radius:8px;padding:0 12px;margin-bottom:12px;'
-                    f'font:{"var(--dmc-mono)" if mono else "var(--dmc-fm)"}'
+            def _lbl(txt: str):
+                ui.html(f'<label class="dmc-label">{txt}</label>')
+
+            def _inp(label: str, key: str, placeholder: str = '', mono: bool = False):
+                _lbl(label)
+                inp_id = f'ei-{key}'
+                _ireg[key] = inp_id
+                val = str(_st.get(key, '') or '').replace('"', '&quot;')
+                font_style = 'font-family:var(--dmc-mono);' if mono else ''
+                ui.html(
+                    f'<input id="{inp_id}" class="dmc-input" value="{val}" '
+                    f'placeholder="{placeholder}" '
+                    f'style="{font_style}margin-bottom:12px">'
                 )
-                inp.on('change', lambda e, k=key: _st.update({k: e.value or ''}))
-                return inp
+
+            async def _sync():
+                """Lê valores atuais dos inputs nativos e sincroniza com _st."""
+                if not _ireg:
+                    return
+                vals = await ui.run_javascript(
+                    '(function(){var d=' + json.dumps(_ireg) + ',o={};'
+                    'for(var k in d){var e=document.getElementById(d[k]);if(e)o[k]=e.value;}'
+                    'return o;})()'
+                )
+                if isinstance(vals, dict):
+                    _st.update(vals)
 
             # ── Seção 1: Identificação ──────────────────────────────────
             ui.html(
@@ -90,26 +106,28 @@ def empresa_dialog(on_save=None) -> None:
             with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
                 with ui.element('div'):
                     # CNPJ com botão de busca
-                    _label('CNPJ')
-                    with ui.element('div').style('display:flex;gap:6px;margin-bottom:12px'):
-                        cnpj_inp = ui.input(
-                            value=str(_st.get('cnpj', '') or ''),
-                            placeholder='00.000.000/0000-00'
-                        ).props('borderless dense outlined').style(
-                            'flex:1;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                            'border-radius:8px;padding:0 12px;font:var(--dmc-mono)'
+                    _lbl('CNPJ')
+                    cnpj_id = 'ei-cnpj'
+                    _ireg['cnpj'] = cnpj_id
+                    cnpj_val = str(_st.get('cnpj', '') or '').replace('"', '&quot;')
+                    with ui.element('div').style('display:flex;gap:6px;margin-bottom:12px;align-items:center'):
+                        ui.html(
+                            f'<input id="{cnpj_id}" class="dmc-input" value="{cnpj_val}" '
+                            f'placeholder="00.000.000/0000-00" '
+                            f'style="font-family:var(--dmc-mono);flex:1;min-width:0">'
                         )
-                        cnpj_inp.on('change', lambda e: _st.update({'cnpj': e.value or ''}))
-                        cnpj_status = ui.html('<span></span>')
+                        cnpj_status = ui.html('<span style="font:10px var(--dmc-mono);white-space:nowrap;flex-shrink:0"></span>')
 
                         async def _buscar_cnpj():
+                            cnpj_now = await ui.run_javascript(
+                                f'document.getElementById("{cnpj_id}")?.value||""'
+                            )
+                            _st['cnpj'] = cnpj_now or ''
                             raw = ''.join(c for c in (_st.get('cnpj') or '') if c.isdigit())
                             if len(raw) != 14:
                                 ui.notify('CNPJ inválido (14 dígitos).', type='warning')
                                 return
-                            cnpj_status.set_content(
-                                '<span style="font:10px var(--dmc-mono);color:#FBBF24">Consultando...</span>'
-                            )
+                            cnpj_status.set_content('<span style="color:#FBBF24">Consultando...</span>')
                             try:
                                 import httpx
                                 async with httpx.AsyncClient(timeout=10) as client:
@@ -119,14 +137,13 @@ def empresa_dialog(on_save=None) -> None:
                                     )
                                 d = r.json()
                                 if d.get('status') == 'ERROR':
-                                    cnpj_status.set_content(
-                                        '<span style="font:10px var(--dmc-mono);color:#F87171">Não encontrado</span>'
-                                    )
+                                    cnpj_status.set_content('<span style="color:#F87171">Não encontrado</span>')
                                     return
-                                nome = (d.get('nome') or '').strip().upper()
+                                nome    = (d.get('nome') or '').strip().upper()
                                 fantasia = (d.get('fantasia') or '').strip().upper()
-                                tel  = (d.get('telefone') or '').split('/')[0].strip()
-                                cep_r = ''.join(c for c in (d.get('cep') or '') if c.isdigit())
+                                tel     = (d.get('telefone') or '').split('/')[0].strip()
+                                cep_r   = ''.join(c for c in (d.get('cep') or '') if c.isdigit())
+                                await _sync()
                                 _st.update({
                                     'razao_social':  nome,
                                     'nome_fantasia': fantasia,
@@ -137,16 +154,12 @@ def empresa_dialog(on_save=None) -> None:
                                     'bairro':        (d.get('bairro') or '').upper(),
                                     'cidade':        (d.get('municipio') or '').upper(),
                                     'uf':            (d.get('uf') or '').upper(),
-                                    'cep_empresa':   cep_r[:5]+'-'+cep_r[5:] if len(cep_r)==8 else '',
+                                    'cep_empresa':   cep_r[:5] + '-' + cep_r[5:] if len(cep_r) == 8 else '',
                                 })
                                 _render_fields()
-                                cnpj_status.set_content(
-                                    '<span style="font:10px var(--dmc-mono);color:#4ADE80">✓ Preenchido</span>'
-                                )
+                                cnpj_status.set_content('<span style="color:#4ADE80">✓ Preenchido</span>')
                             except Exception as ex:
-                                cnpj_status.set_content(
-                                    f'<span style="font:10px var(--dmc-mono);color:#F87171">Erro: {ex}</span>'
-                                )
+                                cnpj_status.set_content(f'<span style="color:#F87171">Erro: {ex}</span>')
 
                         btn_cnpj = ui.element('button').classes('dmc-btn dmc-btn-secondary dmc-btn-sm').style('flex-shrink:0')
                         with btn_cnpj:
@@ -156,13 +169,14 @@ def empresa_dialog(on_save=None) -> None:
                 with ui.element('div'):
                     _inp('Inscrição Municipal', 'im', 'Nº municipal', mono=True)
 
-            # área dos campos que podem ser preenchidos via busca CNPJ
+            # área dos campos que podem ser preenchidos via busca CNPJ/CEP
             fields_area = ui.element('div')
 
             def _render_fields():
                 fields_area.clear()
                 with fields_area:
                     _inp('Razão Social', 'razao_social', 'Nome jurídico da empresa')
+
                     with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
                         with ui.element('div'):
                             _inp('Nome Fantasia', 'nome_fantasia', 'Nome comercial')
@@ -170,7 +184,7 @@ def empresa_dialog(on_save=None) -> None:
                             _inp('Inscrição Estadual', 'ie', 'Nº estadual ou ISENTO', mono=True)
 
                     with ui.element('div').style('margin-bottom:12px'):
-                        _label('Regime Tributário')
+                        _lbl('Regime Tributário')
                         reg_atual = _st.get('regime_trib', '')
                         with ui.element('div').style('display:flex;gap:8px;flex-wrap:wrap'):
                             for val, lbl in [
@@ -196,14 +210,15 @@ def empresa_dialog(on_save=None) -> None:
                         '<span class="material-icons" style="font-size:13px">location_on</span>Endereço</div>'
                     )
 
-                    with ui.element('div').style('display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;margin-bottom:0'):
-                        with ui.element('div').style('min-width:0'):
-                            cep_inp2 = _inp('CEP', 'cep_empresa', '00000-000', mono=True)
+                    with ui.element('div').style('display:flex;gap:8px;align-items:flex-end'):
+                        with ui.element('div').style('flex:1;min-width:0'):
+                            _inp('CEP', 'cep_empresa', '00000-000', mono=True)
                         cep_btn = ui.element('button').classes('dmc-btn dmc-btn-secondary dmc-btn-sm').style('margin-bottom:12px;flex-shrink:0')
                         with cep_btn:
                             ui.html('<span class="material-icons" style="font-size:13px">search</span><span>Buscar</span>')
 
                         async def _buscar_cep():
+                            await _sync()
                             raw = ''.join(c for c in (_st.get('cep_empresa') or '') if c.isdigit())
                             if len(raw) != 8:
                                 ui.notify('CEP inválido (8 dígitos).', type='warning')
@@ -216,6 +231,7 @@ def empresa_dialog(on_save=None) -> None:
                                 if d.get('erro'):
                                     ui.notify('CEP não encontrado.', type='warning')
                                     return
+                                await _sync()
                                 _st.update({
                                     'logradouro': (d.get('logradouro') or '').upper(),
                                     'bairro':     (d.get('bairro') or '').upper(),
@@ -287,8 +303,9 @@ def empresa_dialog(on_save=None) -> None:
             ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
 
             async def _salvar():
+                await _sync()
                 regime = await ui.run_javascript(
-                    "document.querySelector('input[name=\"emp-regime\"]:checked')?.value || ''"
+                    "document.querySelector('input[name=\"emp-regime\"]:checked')?.value||''"
                 )
                 _st['regime_trib'] = regime
                 try:
