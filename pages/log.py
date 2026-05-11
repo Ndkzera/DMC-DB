@@ -191,9 +191,10 @@ def log_page():
     ui.add_head_html(UTILS_JS)
     ui.add_head_html(_PAGE_CSS)
 
-    _lg_nome  = current_user_name()
-    _lg_email = _lgapp.storage.user.get("dmc_user_email", "")
-    mark_active(_lg_email, _lg_nome)
+    _lg_nome   = current_user_name()
+    _lg_email  = _lgapp.storage.user.get("dmc_user_email", "")
+    _lg_perfil = current_user_perfil()
+    mark_active(_lg_email, _lg_nome, _lg_perfil)
 
     def _logout():
         logout_user()
@@ -203,7 +204,7 @@ def log_page():
         "display:none;position:absolute;pointer-events:none"
     )
     _auto_logout_btn.on("click", _logout)
-    ui.timer(60, lambda: mark_active(_lg_email, _lg_nome))
+    ui.timer(60, lambda: mark_active(_lg_email, _lg_nome, _lg_perfil))
 
     _state = {"busca": "", "acao": "todos", "entidade": "todos"}
 

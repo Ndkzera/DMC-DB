@@ -219,9 +219,10 @@ def lixeira_page():
     ui.add_head_html(UTILS_JS)
     ui.add_head_html(_PAGE_CSS)
 
-    _lx_nome  = current_user_name()
-    _lx_email = _app.storage.user.get("dmc_user_email", "")
-    mark_active(_lx_email, _lx_nome)
+    _lx_nome   = current_user_name()
+    _lx_email  = _app.storage.user.get("dmc_user_email", "")
+    _lx_perfil = current_user_perfil()
+    mark_active(_lx_email, _lx_nome, _lx_perfil)
 
     def _logout():
         logout_user()
@@ -231,7 +232,7 @@ def lixeira_page():
         "display:none;position:absolute;pointer-events:none"
     )
     _auto_logout_btn.on("click", _logout)
-    ui.timer(60, lambda: mark_active(_lx_email, _lx_nome))
+    ui.timer(60, lambda: mark_active(_lx_email, _lx_nome, _lx_perfil))
 
     view_state = {"v": "list"}
     dlg_state  = {"on_confirm": None}

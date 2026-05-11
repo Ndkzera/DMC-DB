@@ -113,10 +113,10 @@ def is_authenticated() -> bool:
     return bool(app.storage.user.get("dmc_logged_in"))
 
 
-def mark_active(email: str, nome: str) -> None:
+def mark_active(email: str, nome: str, perfil: str = "") -> None:
     """Registra/renova sessão ativa em storage.general (compartilhado entre todos)."""
     online: dict = app.storage.general.get("online", {})
-    online[email] = {"nome": nome, "ts": time.time()}
+    online[email] = {"nome": nome, "perfil": perfil, "ts": time.time()}
     app.storage.general["online"] = online
 
 
@@ -146,7 +146,7 @@ def login_user(user: dict) -> None:
     app.storage.user["dmc_user_email"]  = user.get("email", "")
     app.storage.user["dmc_user_perfil"] = user.get("perfil", "FUNCIONÁRIO")
     app.storage.user["dmc_user_admin"]  = user.get("admin", False)
-    mark_active(user.get("email", ""), user.get("nome", ""))
+    mark_active(user.get("email", ""), user.get("nome", ""), user.get("perfil", ""))
 
 
 def logout_user() -> None:

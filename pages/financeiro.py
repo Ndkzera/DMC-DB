@@ -152,9 +152,10 @@ def financeiro_page():
     ui.add_head_html(UTILS_JS)
     ui.add_head_html(_PAGE_CSS)
 
-    _fi_nome  = current_user_name()
-    _fi_email = _fapp.storage.user.get("dmc_user_email", "")
-    mark_active(_fi_email, _fi_nome)
+    _fi_nome   = current_user_name()
+    _fi_email  = _fapp.storage.user.get("dmc_user_email", "")
+    _fi_perfil = current_user_perfil()
+    mark_active(_fi_email, _fi_nome, _fi_perfil)
 
     def _logout():
         logout_user()
@@ -164,7 +165,7 @@ def financeiro_page():
         "display:none;position:absolute;pointer-events:none"
     )
     _auto_logout_btn.on("click", _logout)
-    ui.timer(60, lambda: mark_active(_fi_email, _fi_nome))
+    ui.timer(60, lambda: mark_active(_fi_email, _fi_nome, _fi_perfil))
 
     from ui.financeiro_dialogs import emitir_nfse_dialog, config_nfse_dialog, ver_nfse_dialog, relatorio_financeiro_dialog
 
