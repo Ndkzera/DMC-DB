@@ -7,11 +7,13 @@ from datetime import date as _date
 from xml.etree import ElementTree as _ET
 
 # PRJ — SIRGAS 2000 geográfico EPSG:4674 (WKT ESRI)
+# TOWGS84 omitido propositalmente: sua presença (mesmo com zeros) faz algumas
+# versões do PROJ/QGIS usar o método Helmert em vez do lookup pela AUTHORITY,
+# podendo introduzir deslocamento. Sem TOWGS84 o GIS usa o EPSG:4674 diretamente.
 _PRJ = (
     'GEOGCS["SIRGAS 2000",'
     'DATUM["Sistema_de_Referencia_Geocentrico_para_las_AmericaS_2000",'
     'SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]],'
-    'TOWGS84[0,0,0,0,0,0,0],'
     'AUTHORITY["EPSG","6674"]],'
     'PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
     'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
@@ -103,20 +105,20 @@ def _ensure_closed(ring: list[tuple[float, float]]) -> list[tuple[float, float]]
 
 def _orient_rings(rings: list[list[tuple[float, float]]]) -> list[list[tuple[float, float]]]:
     """
-    Shapefile spec: outer rings CCW (area sign < 0 with screen-Y up),
-    inner rings CW. For geographic coords (lat/lon) outer should be CCW
-    in the Cartesian sense → positive shoelace sign.
-    First ring = outer (force CCW), rest = inner (force CW).
+    ESRI geographic shapefile: outer rings CCW, holes CW (Y-up / map convention).
+    _ring_area_sign uses the trapezoidal formula which gives the OPPOSITE sign
+    from the standard shoelace: CCW → negative, CW → positive.
+    So: outer ring → force sign < 0 (CCW); holes → force sign > 0 (CW).
     """
     result = []
     for i, ring in enumerate(rings):
         ring = _ensure_closed(ring)
         sign = _ring_area_sign(ring)
-        if i == 0:
-            if sign < 0:
-                ring = list(reversed(ring))
-        else:
+        if i == 0:          # outer ring: must be CCW → sign < 0
             if sign > 0:
+                ring = list(reversed(ring))
+        else:               # hole: must be CW → sign > 0
+            if sign < 0:
                 ring = list(reversed(ring))
         result.append(ring)
     return result
