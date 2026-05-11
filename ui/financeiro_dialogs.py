@@ -591,6 +591,17 @@ def certificado_dialog(on_save=None) -> None:
 def config_nfse_dialog(on_save=None) -> None:
     cfg = load_config()
     _st = dict(cfg)
+    _ireg: dict = {}
+
+    async def _sync():
+        if not _ireg:
+            return
+        vals = await ui.run_javascript(
+            '(function(){var d=' + json.dumps(_ireg) + ',o={};'
+            'for(var k in d){var e=document.getElementById(d[k]);if(e)o[k]=e.value;}return o;})()'
+        )
+        if isinstance(vals, dict):
+            _st.update(vals)
 
     with ui.dialog() as dlg, ui.card().style(
         'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
@@ -623,14 +634,14 @@ def config_nfse_dialog(on_save=None) -> None:
             def _inp(label, key, placeholder='', mono=False):
                 _label(label)
                 font = 'var(--dmc-mono)' if mono else 'var(--dmc-fm)'
-                inp = ui.input(value=_st.get(key, ''), placeholder=placeholder).props(
-                    'borderless dense outlined'
-                ).style(
-                    f'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                    f'border-radius:8px;padding:0 12px;margin-bottom:12px;font:{font}'
+                _id = f'cfgn-{key}'
+                _ireg[key] = _id
+                val = str(_st.get(key, '') or '')
+                ui.html(
+                    f'<input id="{_id}" class="dmc-input" value="{val}"'
+                    f' placeholder="{placeholder}"'
+                    f' style="font:{font};margin-bottom:12px">'
                 )
-                inp.on('change', lambda e, k=key: _st.update({k: e.value or ''}))
-                return inp
 
             with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
                 with ui.element('div'):
@@ -723,6 +734,7 @@ def config_nfse_dialog(on_save=None) -> None:
             ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
 
             async def _salvar():
+                await _sync()
                 amb = await ui.run_javascript(
                     "document.querySelector('input[name=\"cfg-amb\"]:checked')?.value || 'homologacao'"
                 )
@@ -770,6 +782,30 @@ def emitir_nfse_dialog(on_success=None) -> None:
         'valor':       '',
         'iss_retido':  False,
     }
+    _ireg: dict = {}
+
+    async def _sync():
+        if not _ireg:
+            return
+        vals = await ui.run_javascript(
+            '(function(){var d=' + json.dumps(_ireg) + ',o={};'
+            'for(var k in d){'
+            'var e=document.getElementById(d[k]);'
+            'if(e)o[k]=(e.tagName==="TEXTAREA"?e.value:e.value);}return o;})()'
+        )
+        if isinstance(vals, dict):
+            _st.update(vals)
+
+    ui.add_body_html(
+        '<script>if(!window._nfseISSCalc){window._nfseISSCalc=function(v,aliq,pid){'
+        'var p=document.getElementById(pid);if(!p)return;'
+        'v=parseFloat(v.replace(",","."));'
+        'if(!isNaN(v)&&v>0){'
+        'var i=Math.round(v*aliq/100*100)/100;'
+        'p.innerHTML="ISS ("+aliq.toFixed(2)+"%)&nbsp;<span style=\'color:#FBBF24\'>R$\xa0"+i.toFixed(2)+"</span>"'
+        '+"&nbsp;&middot;&nbsp;L&iacute;q&nbsp;<span style=\'color:#4ADE80\'>R$\xa0"+(v-i).toFixed(2)+"</span>";'
+        '}else{p.innerHTML="";}};}</script>'
+    )
 
     with ui.dialog() as dlg, ui.card().style(
         'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
@@ -861,12 +897,12 @@ def emitir_nfse_dialog(on_success=None) -> None:
             def _f(label, key, placeholder='', mono=False, grid_span=False):
                 font = 'var(--dmc-mono)' if mono else 'var(--dmc-fm)'
                 _label(label)
-                inp = ui.input(placeholder=placeholder).props('borderless dense outlined').style(
-                    f'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                    f'border-radius:8px;padding:0 12px;margin-bottom:12px;font:{font}'
+                _id = f'nfse-f-{key}'
+                _ireg[key] = _id
+                ui.html(
+                    f'<input id="{_id}" class="dmc-input" placeholder="{placeholder}"'
+                    f' style="font:{font};margin-bottom:12px">'
                 )
-                inp.on('change', lambda e, k=key: _st.update({k: e.value or ''}))
-                return inp
 
             with ui.element('div').style('display:grid;grid-template-columns:1fr 2fr;gap:14px'):
                 with ui.element('div'):
@@ -898,34 +934,28 @@ def emitir_nfse_dialog(on_success=None) -> None:
             _section('Serviço')
 
             _label('Descrição do serviço prestado')
-            desc_inp = ui.textarea(placeholder='Descreva o serviço prestado...').props(
-                'borderless dense outlined rows=3'
-            ).style(
-                'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                'border-radius:8px;padding:8px 12px;margin-bottom:12px;'
-                'font:13px var(--dmc-fm);resize:vertical'
+            _ireg['descricao'] = 'nfse-f-descricao'
+            ui.html(
+                '<textarea id="nfse-f-descricao" class="dmc-input" rows="3"'
+                ' placeholder="Descreva o serviço prestado..."'
+                ' style="padding:8px 12px;resize:vertical;height:auto;margin-bottom:12px"></textarea>'
             )
-            desc_inp.on('change', lambda e: _st.update({'descricao': e.value or ''}))
 
             with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
                 with ui.element('div'):
                     _label('Código Tributação Nacional (cTribNac)')
-                    cod_trib = ui.input(value='010101', placeholder='010101').props(
-                        'borderless dense outlined'
-                    ).style(
-                        'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                        'border-radius:8px;padding:0 12px;margin-bottom:12px;font:var(--dmc-mono)'
+                    _ireg['cod_tributacao'] = 'nfse-f-cod_tributacao'
+                    ui.html(
+                        '<input id="nfse-f-cod_tributacao" class="dmc-input" value="010101"'
+                        ' placeholder="010101" style="font:var(--dmc-mono);margin-bottom:12px">'
                     )
-                    cod_trib.on('change', lambda e: _st.update({'cod_tributacao': e.value or '010101'}))
                 with ui.element('div'):
                     _label('Código NBS (cNBS — obrigatório 2026+)')
-                    cod_nbs = ui.input(placeholder='Ex: 1.0301.00.00').props(
-                        'borderless dense outlined'
-                    ).style(
-                        'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                        'border-radius:8px;padding:0 12px;margin-bottom:12px;font:var(--dmc-mono)'
+                    _ireg['cod_nbs'] = 'nfse-f-cod_nbs'
+                    ui.html(
+                        '<input id="nfse-f-cod_nbs" class="dmc-input"'
+                        ' placeholder="Ex: 1.0301.00.00" style="font:var(--dmc-mono);margin-bottom:12px">'
                     )
-                    cod_nbs.on('change', lambda e: _st.update({'cod_nbs': e.value or ''}))
 
             # Código NBS info
             ui.html(
@@ -941,31 +971,24 @@ def emitir_nfse_dialog(on_success=None) -> None:
             _section('Valores')
 
             aliq = cfg.get('aliquota_iss', '5.00')
-            valor_display = ui.html('<div style="min-height:18px"></div>')
+            aliq_f = float(aliq or '5.00')
+            _val_id  = f'nfse-val-{id(dlg)}'
+            _iss_id  = f'nfse-iss-{id(dlg)}'
+            _ireg['valor'] = _val_id
 
             with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
                 with ui.element('div'):
                     _label('Valor do serviço (R$)')
-                    valor_inp = ui.input(placeholder='0,00').props(
-                        'borderless dense outlined'
-                    ).style(
-                        'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                        'border-radius:8px;padding:0 12px;margin-bottom:8px;font:var(--dmc-mono)'
+                    _oninput = f"_nfseISSCalc(this.value,{aliq_f},'{_iss_id}')"
+                    ui.html(
+                        f'<input id="{_val_id}" class="dmc-input" placeholder="0,00"'
+                        f' oninput="{_oninput}"'
+                        f' style="font:var(--dmc-mono);margin-bottom:4px">'
                     )
-                    def _on_valor(e):
-                        v = (e.value or '').replace(',', '.')
-                        try:
-                            vf = float(v)
-                            iss = round(vf * float(aliq) / 100, 2)
-                            valor_display.set_content(
-                                f'<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2)">'
-                                f'ISS ({aliq}%): <span style="color:#FBBF24">R$ {iss:.2f}</span>'
-                                f' · Líquido: <span style="color:#4ADE80">R$ {vf-iss:.2f}</span></div>'
-                            )
-                        except ValueError:
-                            valor_display.set_content('<div style="min-height:18px"></div>')
-                        _st['valor'] = v
-                    valor_inp.on('input', _on_valor)
+                    ui.html(
+                        f'<div id="{_iss_id}" style="font:11px var(--dmc-mono);'
+                        f'color:var(--dmc-muted2);min-height:18px;margin-bottom:8px"></div>'
+                    )
 
                 with ui.element('div'):
                     _label(f'Alíquota ISS configurada')
@@ -1003,6 +1026,8 @@ def emitir_nfse_dialog(on_success=None) -> None:
                 if not _DEPS_OK:
                     ui.notify(_DEPS_MSG, type='negative', multi_line=True)
                     return
+
+                await _sync()
 
                 # Coleta dados do JS
                 tipo = await ui.run_javascript(
@@ -1567,40 +1592,46 @@ def relatorio_financeiro_dialog() -> None:
                 '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
                 'letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">Período</div>'
             )
-            periodo_sel = ui.select(
-                options={k: v for k, v in _PERIODOS},
-                value='mes_atual',
-            ).props('outlined dense options-dense').style(
-                'width:100%;background:var(--dmc-bg3);border-radius:8px;margin-bottom:12px'
+            _per_id = f'rfi-per-{id(dlg)}'
+            _opts_html = ''.join(
+                f'<option value="{k}"{"  selected" if k == "mes_atual" else ""}>{v}</option>'
+                for k, v in _PERIODOS
             )
-            periodo_sel.on('update:model-value', lambda e: _st.update({'periodo': e.value}))
+            ui.html(
+                f'<select id="{_per_id}" class="dmc-input" style="margin-bottom:12px;cursor:pointer">'
+                f'{_opts_html}</select>'
+            )
 
-            custom_box = ui.element('div').style(
+            _cbox_id = f'rfi-cbox-{id(dlg)}'
+            custom_box = ui.element('div').props(f'id={_cbox_id}').style(
                 'display:none;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px'
             )
             with custom_box:
                 with ui.element('div'):
                     ui.html('<label class="dmc-label">De</label>')
-                    de_inp = ui.input(placeholder='AAAA-MM-DD').props('borderless dense outlined').style(
-                        'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                        'border-radius:8px;padding:0 12px;font:var(--dmc-mono)'
+                    ui.html(
+                        '<input type="date" id="rfi-de" class="dmc-input"'
+                        ' style="font:var(--dmc-mono)">'
                     )
-                    de_inp.on('change', lambda e: _st.update({'de': e.value or ''}))
                 with ui.element('div'):
                     ui.html('<label class="dmc-label">Até</label>')
-                    ate_inp = ui.input(placeholder='AAAA-MM-DD').props('borderless dense outlined').style(
-                        'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
-                        'border-radius:8px;padding:0 12px;font:var(--dmc-mono)'
+                    ui.html(
+                        '<input type="date" id="rfi-ate" class="dmc-input"'
+                        ' style="font:var(--dmc-mono)">'
                     )
-                    ate_inp.on('change', lambda e: _st.update({'ate': e.value or ''}))
 
-            def _on_periodo(e):
-                _st['periodo'] = e.value
-                custom_box.style(
-                    'display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px'
-                    if e.value == 'personalizado' else 'display:none'
+            async def _setup_periodo():
+                await ui.run_javascript(
+                    f'(function(){{'
+                    f'var sel=document.getElementById("{_per_id}");'
+                    f'var box=document.getElementById("{_cbox_id}");'
+                    f'if(!sel)return;'
+                    f'sel.addEventListener("change",function(){{'
+                    f'if(box)box.style.display=this.value==="personalizado"?"grid":"none";'
+                    f'}});'
+                    f'}})()'
                 )
-            periodo_sel.on('update:model-value', _on_periodo)
+            ui.timer(0.15, _setup_periodo, once=True)
 
             # Filtro de status
             ui.html(
@@ -1635,15 +1666,20 @@ def relatorio_financeiro_dialog() -> None:
             ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
 
             async def _gerar():
-                _st['inc_emitida'] = await ui.run_javascript(
-                    "document.getElementById('rfi-emit')?.checked ?? true"
+                vals = await ui.run_javascript(
+                    f'(function(){{'
+                    f'var s=document.getElementById("{_per_id}");'
+                    f'return {{'
+                    f'periodo:s?s.value:"mes_atual",'
+                    f'de:(document.getElementById("rfi-de")||{{}}).value||"",'
+                    f'ate:(document.getElementById("rfi-ate")||{{}}).value||"",'
+                    f'inc_emitida:!!(document.getElementById("rfi-emit")||{{}}).checked,'
+                    f'inc_homo:!!(document.getElementById("rfi-homo")||{{}}).checked,'
+                    f'inc_erro:!!(document.getElementById("rfi-erro")||{{}}).checked,'
+                    f'}};}})()'
                 )
-                _st['inc_homo'] = await ui.run_javascript(
-                    "document.getElementById('rfi-homo')?.checked ?? true"
-                )
-                _st['inc_erro'] = await ui.run_javascript(
-                    "document.getElementById('rfi-erro')?.checked ?? true"
-                )
+                if isinstance(vals, dict):
+                    _st.update(vals)
 
                 entries = _filter_entries(
                     list_nfse(),
