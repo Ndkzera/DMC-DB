@@ -433,7 +433,7 @@ def certificado_dialog(on_save=None) -> None:
                 f' onchange="_dmcCertFile(this.files[0],\'{_dz_id}\')">'
             )
 
-            ui.html(
+            ui.add_body_html(
                 '<script>'
                 'if(!window._dmcCertFile){'
                 'window._dmcCertFile=function(file,dzId){'
