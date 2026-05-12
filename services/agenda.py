@@ -58,17 +58,74 @@ def _get_service():
     return build("calendar", "v3", credentials=creds)
 
 
-def sync_authenticate():
-    """Fluxo OAuth bloqueante — chame via asyncio.to_thread() para não travar o event loop."""
+_auth_state: dict = {}
+
+
+def start_auth_flow() -> str:
+    """Fase 1: inicia servidor local OAuth e retorna a URL de autorização (não bloqueia).
+    Chame finish_auth_flow() em asyncio.to_thread() para aguardar o callback."""
+    import wsgiref.simple_server
+    import wsgiref.util
+
     if not CREDENTIALS_FILE.exists():
         raise FileNotFoundError(
             f"credentials.json não encontrado em:\n{CREDENTIALS_FILE}\n"
             "Baixe o arquivo no Google Cloud Console e coloque-o nessa pasta."
         )
+
     from google_auth_oauthlib.flow import InstalledAppFlow
+
+    class _CaptureApp:
+        def __init__(self):
+            self.last_uri = None
+
+        def __call__(self, environ, start_response):
+            self.last_uri = wsgiref.util.request_uri(environ)
+            start_response("200 OK", [("Content-type", "text/html; charset=utf-8")])
+            return [
+                b"<html><body style='font-family:sans-serif;padding:40px'>"
+                b"<h2 style='color:#4ADE80'>&#10003; Autorizado!</h2>"
+                b"<p>Pode fechar esta aba e voltar ao sistema.</p>"
+                b"</body></html>"
+            ]
+
     flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
-    creds = flow.run_local_server(port=0, open_browser=True)
-    TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+    capture = _CaptureApp()
+    server = wsgiref.simple_server.make_server("localhost", 0, capture)
+    port = server.server_port
+    flow.redirect_uri = f"http://localhost:{port}/"
+    auth_url, _ = flow.authorization_url(prompt="consent")
+
+    _auth_state.update({"flow": flow, "server": server, "capture": capture})
+    return auth_url
+
+
+def finish_auth_flow() -> None:
+    """Fase 2: aguarda o callback OAuth e salva o token. Chame via asyncio.to_thread()."""
+    flow = _auth_state["flow"]
+    server = _auth_state["server"]
+    capture = _auth_state["capture"]
+    try:
+        server.handle_request()  # bloqueia até o redirect chegar
+        if not capture.last_uri:
+            raise RuntimeError("Callback não recebido.")
+        authorization_response = capture.last_uri.replace("http://", "https://")
+        flow.fetch_token(authorization_response=authorization_response)
+        TOKEN_FILE.write_text(flow.credentials.to_json(), encoding="utf-8")
+    finally:
+        _auth_state.clear()
+        try:
+            server.server_close()
+        except Exception:
+            pass
+
+
+def sync_authenticate():
+    """Compat: fluxo bloqueante completo (uso interno/CLI)."""
+    url = start_auth_flow()
+    import webbrowser
+    webbrowser.open(url)
+    finish_auth_flow()
 
 
 def disconnect():

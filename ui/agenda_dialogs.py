@@ -10,7 +10,8 @@ from services.auth import _load as _load_users
 from services.obras import load_obras
 
 from services.agenda import (
-    sync_authenticate,
+    start_auth_flow,
+    finish_auth_flow,
     create_event,
     delete_event,
     disconnect,
@@ -113,11 +114,33 @@ def conectar_agenda_dialog() -> None:
         ):
             ui.button("Fechar", on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
 
+            auth_url_box = ui.html('').style('display:none')
+
             async def _conectar():
-                status_lbl.set_text("Abrindo navegador para autorização…")
+                btn_conectar.disable()
+                status_lbl.set_text("Gerando link de autorização…")
                 status_lbl.style("color:#FBBF24")
                 try:
-                    await asyncio.to_thread(sync_authenticate)
+                    url = await asyncio.to_thread(start_auth_flow)
+                    auth_url_box.set_content(
+                        f'<div style="margin-top:10px;padding:12px 14px;'
+                        f'background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.25);'
+                        f'border-radius:9px">'
+                        f'<div style="font:600 11px var(--dmc-mono);color:#60A5FA;'
+                        f'text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">'
+                        f'Abra este link no seu navegador</div>'
+                        f'<a href="{url}" target="_blank" style="font:11px var(--dmc-mono);'
+                        f'color:#93C5FD;word-break:break-all;text-decoration:none">{url}</a>'
+                        f'<div style="font:10px var(--dmc-fm);color:var(--dmc-muted2);margin-top:8px">'
+                        f'&#9432; Se estiver acessando via t&uacute;nel, abra '
+                        f'<b>http://localhost:8080</b> primeiro para que o retorno OAuth funcione.</div>'
+                        f'</div>'
+                    )
+                    auth_url_box.style('display:block')
+                    status_lbl.set_text("Aguardando autorização no navegador…")
+                    status_lbl.style("color:#FBBF24")
+                    await asyncio.to_thread(finish_auth_flow)
+                    auth_url_box.style('display:none')
                     status_lbl.set_text("✓ Conectado com sucesso!")
                     status_lbl.style("color:#4ADE80")
                     ui.notify("Google Agenda conectado!", type="positive")
@@ -127,8 +150,10 @@ def conectar_agenda_dialog() -> None:
                 except Exception as exc:
                     status_lbl.set_text(f"Erro: {exc}")
                     status_lbl.style("color:#F87171")
+                finally:
+                    btn_conectar.enable()
 
-            ui.button("Conectar", on_click=_conectar).props(
+            btn_conectar = ui.button("Conectar", on_click=_conectar).props(
                 'unelevated no-caps'
             ).classes('dmc-btn dmc-btn-primary').style("padding:0 20px")
     dlg.open()
