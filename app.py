@@ -96,6 +96,32 @@ async def trash_download(filename: str):
     return FileResponse(str(p), filename=orig, media_type="application/octet-stream")
 
 
+@app.get("/oauth_callback")
+async def oauth_callback(code: str = "", error: str = ""):
+    """Recebe o redirect do Google após autorização OAuth."""
+    from services.agenda import complete_auth_with_code, _auth_state
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    if not code:
+        return JSONResponse({"error": "código ausente"}, status_code=400)
+    if not _auth_state.get("flow"):
+        return JSONResponse({"error": "sessão expirada — clique em Conectar novamente"}, status_code=400)
+    try:
+        complete_auth_with_code(code)
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            "<html><body style='font-family:sans-serif;background:#111;color:#eee;"
+            "display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
+            "<div style='text-align:center'>"
+            "<div style='font-size:48px'>✓</div>"
+            "<h2 style='color:#4ADE80;margin:12px 0'>Google Agenda conectado!</h2>"
+            "<p style='color:#aaa'>Pode fechar esta aba e voltar ao sistema.</p>"
+            "</div></body></html>"
+        )
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @app.get("/api/cep/{cep}")
 async def cep_endpoint(cep: str):
     cep = "".join(c for c in cep if c.isdigit())[:8]

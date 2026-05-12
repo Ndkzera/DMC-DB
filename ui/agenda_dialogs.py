@@ -11,7 +11,6 @@ from services.obras import load_obras
 
 from services.agenda import (
     start_auth_flow,
-    finish_auth_flow,
     create_event,
     delete_event,
     disconnect,
@@ -121,29 +120,42 @@ def conectar_agenda_dialog() -> None:
                 status_lbl.set_text("Gerando link de autorização…")
                 status_lbl.style("color:#FBBF24")
                 try:
-                    url = await asyncio.to_thread(start_auth_flow)
+                    url = await asyncio.to_thread(start_auth_flow, "http://localhost:8080")
                     auth_url_box.set_content(
                         f'<div style="margin-top:10px;padding:12px 14px;'
                         f'background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.25);'
                         f'border-radius:9px">'
                         f'<div style="font:600 11px var(--dmc-mono);color:#60A5FA;'
                         f'text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">'
-                        f'Abra este link no seu navegador</div>'
-                        f'<a href="{url}" target="_blank" style="font:11px var(--dmc-mono);'
-                        f'color:#93C5FD;word-break:break-all;text-decoration:none">{url}</a>'
-                        f'<div style="font:10px var(--dmc-fm);color:var(--dmc-muted2);margin-top:8px">'
-                        f'&#9432; Se estiver acessando via t&uacute;nel, abra '
-                        f'<b>http://localhost:8080</b> primeiro para que o retorno OAuth funcione.</div>'
+                        f'Clique para autorizar o Google Agenda</div>'
+                        f'<a href="{url}" target="_blank" style="display:inline-block;'
+                        f'margin:6px 0;padding:8px 16px;background:rgba(96,165,250,.15);'
+                        f'border:1px solid rgba(96,165,250,.4);border-radius:8px;'
+                        f'font:600 12px var(--dmc-fm);color:#93C5FD;text-decoration:none">'
+                        f'Abrir autorização Google ↗</a>'
+                        f'<div style="font:10px var(--dmc-fm);color:var(--dmc-muted2);margin-top:6px">'
+                        f'&#9432; Após autorizar, o sistema detecta automaticamente.<br>'
+                        f'Se estiver acessando via t&uacute;nel, abra '
+                        f'<b>http://localhost:8080</b> para que o retorno funcione.</div>'
                         f'</div>'
                     )
                     auth_url_box.style('display:block')
                     status_lbl.set_text("Aguardando autorização no navegador…")
                     status_lbl.style("color:#FBBF24")
-                    await asyncio.to_thread(finish_auth_flow)
+                    # Polling: verifica a cada 2s se o token foi salvo
+                    for _ in range(60):
+                        await asyncio.sleep(2)
+                        from services.agenda import is_connected
+                        if is_connected():
+                            break
                     auth_url_box.style('display:none')
-                    status_lbl.set_text("✓ Conectado com sucesso!")
-                    status_lbl.style("color:#4ADE80")
-                    ui.notify("Google Agenda conectado!", type="positive")
+                    if is_connected():
+                        status_lbl.set_text("✓ Conectado com sucesso!")
+                        status_lbl.style("color:#4ADE80")
+                        ui.notify("Google Agenda conectado!", type="positive")
+                    else:
+                        status_lbl.set_text("Tempo esgotado. Tente novamente.")
+                        status_lbl.style("color:#F87171")
                 except FileNotFoundError as exc:
                     status_lbl.set_text(str(exc))
                     status_lbl.style("color:#F87171")
