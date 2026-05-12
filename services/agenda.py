@@ -88,6 +88,17 @@ def complete_auth_with_code(code: str) -> None:
     _auth_state.clear()
 
 
+def complete_auth_from_redirect_url(redirect_url: str) -> None:
+    """Extrai o código da URL de retorno colada pelo usuário e completa o auth."""
+    from urllib.parse import urlparse, parse_qs
+    parsed = urlparse(redirect_url.strip())
+    params = parse_qs(parsed.query)
+    code = (params.get("code") or [""])[0]
+    if not code:
+        raise ValueError("Código não encontrado na URL. Verifique e tente novamente.")
+    complete_auth_with_code(code)
+
+
 def disconnect():
     if TOKEN_FILE.exists():
         TOKEN_FILE.unlink()

@@ -11,6 +11,7 @@ from services.obras import load_obras
 
 from services.agenda import (
     start_auth_flow,
+    complete_auth_from_redirect_url,
     create_event,
     delete_event,
     disconnect,
@@ -106,6 +107,24 @@ def conectar_agenda_dialog() -> None:
                 "font:12px var(--dmc-fm);color:var(--dmc-muted2);min-height:38px;"
             )
 
+            auth_url_box = ui.html('').style('display:none')
+
+            redirect_row = ui.element('div').style(
+                'display:none;margin-top:10px;gap:8px;'
+                'background:rgba(251,191,36,.05);border:1px solid rgba(251,191,36,.2);'
+                'border-radius:9px;padding:12px 14px'
+            )
+            with redirect_row:
+                ui.html(
+                    '<div style="font:600 11px var(--dmc-mono);color:#FBBF24;'
+                    'text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">'
+                    'Cole a URL de retorno do Google</div>'
+                )
+                redirect_input = ui.input(placeholder='http://localhost:PORTA/?state=...&code=...').style(
+                    'width:100%;background:var(--dmc-bg3);border:1px solid var(--dmc-b2);'
+                    'border-radius:8px;padding:0 12px;font:11px var(--dmc-mono)'
+                ).props('borderless dense outlined')
+
         # Rodapé
         with ui.element("div").style(
             "padding:14px 24px;border-top:1px solid var(--dmc-b1);"
@@ -113,7 +132,31 @@ def conectar_agenda_dialog() -> None:
         ):
             ui.button("Fechar", on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
 
-            auth_url_box = ui.html('').style('display:none')
+            async def _confirmar():
+                url_colada = redirect_input.value.strip()
+                if not url_colada:
+                    ui.notify('Cole a URL de retorno primeiro.', type='warning')
+                    return
+                btn_confirmar.disable()
+                try:
+                    await asyncio.to_thread(complete_auth_from_redirect_url, url_colada)
+                    auth_url_box.style('display:none')
+                    redirect_row.style('display:none')
+                    status_lbl.set_text("✓ Conectado com sucesso!")
+                    status_lbl.style("color:#4ADE80")
+                    ui.notify("Google Agenda conectado!", type="positive")
+                except Exception as exc:
+                    status_lbl.set_text(f"Erro: {exc}")
+                    status_lbl.style("color:#F87171")
+                finally:
+                    btn_confirmar.enable()
+
+            btn_confirmar = ui.button("Confirmar código", icon='check', on_click=_confirmar).props(
+                'unelevated no-caps'
+            ).classes('dmc-btn').style(
+                'display:none;background:rgba(251,191,36,.15)!important;'
+                'color:#FBBF24!important;border:1px solid rgba(251,191,36,.3)'
+            )
 
             async def _conectar():
                 btn_conectar.disable()
@@ -122,40 +165,28 @@ def conectar_agenda_dialog() -> None:
                 try:
                     url = await asyncio.to_thread(start_auth_flow, "http://localhost:8080")
                     auth_url_box.set_content(
-                        f'<div style="margin-top:10px;padding:12px 14px;'
+                        f'<div style="padding:12px 14px;'
                         f'background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.25);'
                         f'border-radius:9px">'
                         f'<div style="font:600 11px var(--dmc-mono);color:#60A5FA;'
                         f'text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">'
-                        f'Clique para autorizar o Google Agenda</div>'
+                        f'1 · Clique para autorizar o Google Agenda</div>'
                         f'<a href="{url}" target="_blank" style="display:inline-block;'
                         f'margin:6px 0;padding:8px 16px;background:rgba(96,165,250,.15);'
                         f'border:1px solid rgba(96,165,250,.4);border-radius:8px;'
                         f'font:600 12px var(--dmc-fm);color:#93C5FD;text-decoration:none">'
                         f'Abrir autorização Google ↗</a>'
                         f'<div style="font:10px var(--dmc-fm);color:var(--dmc-muted2);margin-top:6px">'
-                        f'&#9432; Após autorizar, o sistema detecta automaticamente.<br>'
-                        f'Se estiver acessando via t&uacute;nel, abra '
-                        f'<b>http://localhost:8080</b> para que o retorno funcione.</div>'
+                        f'2 · Após autorizar, o Google abre uma p&aacute;gina que n&atilde;o carrega '
+                        f'(isso &eacute; normal). Copie a URL completa da barra do navegador '
+                        f'e cole no campo abaixo.</div>'
                         f'</div>'
                     )
-                    auth_url_box.style('display:block')
-                    status_lbl.set_text("Aguardando autorização no navegador…")
+                    auth_url_box.style('display:block;margin-top:10px')
+                    redirect_row.style('display:block')
+                    btn_confirmar.style('display:inline-flex')
+                    status_lbl.set_text("Aguardando — cole a URL de retorno abaixo…")
                     status_lbl.style("color:#FBBF24")
-                    # Polling: verifica a cada 2s se o token foi salvo
-                    for _ in range(60):
-                        await asyncio.sleep(2)
-                        from services.agenda import is_connected
-                        if is_connected():
-                            break
-                    auth_url_box.style('display:none')
-                    if is_connected():
-                        status_lbl.set_text("✓ Conectado com sucesso!")
-                        status_lbl.style("color:#4ADE80")
-                        ui.notify("Google Agenda conectado!", type="positive")
-                    else:
-                        status_lbl.set_text("Tempo esgotado. Tente novamente.")
-                        status_lbl.style("color:#F87171")
                 except FileNotFoundError as exc:
                     status_lbl.set_text(str(exc))
                     status_lbl.style("color:#F87171")
