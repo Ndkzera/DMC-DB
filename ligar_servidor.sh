@@ -6,6 +6,15 @@ cd "$DIRETORIO"
 
 source "$DIRETORIO/venv/bin/activate"
 
+# Instala cloudflared se não estiver disponível
+if ! command -v cloudflared &>/dev/null; then
+    echo "cloudflared não encontrado. Instalando..."
+    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
+    chmod +x /tmp/cloudflared
+    sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
+    echo "cloudflared instalado."
+fi
+
 # Inicia o servidor em background
 python3 app.py &
 APP_PID=$!
