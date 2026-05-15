@@ -3010,7 +3010,10 @@ def gerador_kml_dialog() -> None:
         return f'{alpha}{h[4:6]}{h[2:4]}{h[0:2]}'.lower()
 
     def _parse_coords_flex(text: str) -> list[tuple[float, float, str]]:
-        """(norte, leste, nome) — nome='' se ausente na linha."""
+        """(norte, leste, nome) — formatos aceitos por linha:
+        NORTE LESTE
+        PONTO NORTE LESTE
+        PONTO DESC NORTE LESTE  (tab ou ; como separador)"""
         out: list[tuple[float, float, str]] = []
         for raw in text.strip().splitlines():
             line = raw.strip()
@@ -3025,11 +3028,20 @@ def gerador_kml_dialog() -> None:
             parts = [p.replace(',', '.') for p in parts if p.strip()]
             if len(parts) < 2:
                 continue
+            # Formato: NORTE LESTE
             try:
                 out.append((float(parts[0]), float(parts[1]), ''))
                 continue
             except ValueError:
                 pass
+            # Formato: PONTO NORTE LESTE
+            if len(parts) == 3:
+                try:
+                    out.append((float(parts[1]), float(parts[2]), parts[0]))
+                    continue
+                except ValueError:
+                    pass
+            # Formato: PONTO DESC NORTE LESTE
             if len(parts) >= 4:
                 try:
                     out.append((float(parts[2]), float(parts[3]), parts[0]))
@@ -3281,12 +3293,12 @@ def gerador_kml_dialog() -> None:
 
             ui.html(
                 '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);margin-bottom:6px">'
-                'Cole NORTE e LESTE (m) por linha — 2 colunas, ou PONTO · DESC · NORTE · LESTE</div>'
+                'Cole por linha: <b>NORTE LESTE</b> &nbsp;ou&nbsp; <b>PONTO NORTE LESTE</b></div>'
             )
             ui.html(
                 '<textarea id="kmlg-coords" rows="10" '
-                r'placeholder="7045234.123&#9;724567.891&#10;7045230.456&#9;724571.234&#10;'
-                r'7045225.789&#9;724560.123&#10;7045231.000&#9;724555.789" '
+                r'placeholder="VT-01&#9;7045234.123&#9;724567.891&#10;VT-02&#9;7045230.456&#9;724571.234&#10;'
+                r'VT-03&#9;7045225.789&#9;724560.123&#10;VT-04&#9;7045231.000&#9;724555.789" '
                 'style="width:100%;box-sizing:border-box;resize:vertical;'
                 'font:12px var(--dmc-mono);color:var(--dmc-text);'
                 'background:var(--dmc-bg3);border:1px solid var(--dmc-b1);'
@@ -3346,19 +3358,14 @@ def gerador_kml_dialog() -> None:
                         btn_dl.disable()
                         return
 
-                    has_nome = any(nm for _, _, nm in pts)
                     rows = ''
                     for i, (norte, leste, nm) in enumerate(pts):
                         bg = 'var(--dmc-bg3)' if i % 2 == 0 else 'var(--dmc-bg2)'
-                        nome_td = (
-                            f'<td style="padding:4px 10px;font:11px var(--dmc-mono);color:var(--dmc-muted)">'
-                            f'{nm}</td>'
-                        ) if has_nome else ''
                         rows += (
                             f'<tr style="background:{bg}">'
                             f'<td style="padding:4px 10px;font:11px var(--dmc-mono);'
-                            f'color:var(--dmc-muted2);width:40px">{i + 1}</td>'
-                            f'{nome_td}'
+                            f'color:var(--dmc-muted);max-width:120px;white-space:nowrap;'
+                            f'overflow:hidden;text-overflow:ellipsis">{nm or "—"}</td>'
                             f'<td style="padding:4px 10px;font:11px var(--dmc-mono);color:#FBBF24">'
                             f'{norte:.3f}</td>'
                             f'<td style="padding:4px 10px;font:11px var(--dmc-mono);color:#FBBF24">'
@@ -3366,10 +3373,11 @@ def gerador_kml_dialog() -> None:
                             f'</tr>'
                         )
                     n = len(pts)
-                    th_nome = (
+                    th = (
                         '<th style="padding:6px 10px;text-align:left;font:10px var(--dmc-mono);'
-                        'color:var(--dmc-muted2);letter-spacing:.09em;text-transform:uppercase">NOME</th>'
-                    ) if has_nome else ''
+                        'color:var(--dmc-muted2);letter-spacing:.09em;text-transform:uppercase">'
+                        '{}</th>'
+                    )
                     ui.html(
                         f'<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);margin-bottom:8px">'
                         f'<b style="color:#FBBF24">{n}</b> ponto(s) carregado(s)</div>'
@@ -3377,13 +3385,7 @@ def gerador_kml_dialog() -> None:
                         f'border-radius:8px;overflow:hidden;max-height:220px;overflow-y:auto">'
                         f'<table style="width:100%;border-collapse:collapse">'
                         f'<thead><tr style="border-bottom:1px solid var(--dmc-b1)">'
-                        f'<th style="padding:6px 10px;text-align:left;font:10px var(--dmc-mono);'
-                        f'color:var(--dmc-muted2);letter-spacing:.09em;text-transform:uppercase">#</th>'
-                        f'{th_nome}'
-                        f'<th style="padding:6px 10px;text-align:left;font:10px var(--dmc-mono);'
-                        f'color:var(--dmc-muted2);letter-spacing:.09em;text-transform:uppercase">NORTE (m)</th>'
-                        f'<th style="padding:6px 10px;text-align:left;font:10px var(--dmc-mono);'
-                        f'color:var(--dmc-muted2);letter-spacing:.09em;text-transform:uppercase">LESTE (m)</th>'
+                        f'{th.format("PONTO")}{th.format("NORTE (m)")}{th.format("LESTE (m)")}'
                         f'</tr></thead>'
                         f'<tbody>{rows}</tbody>'
                         f'</table></div>'
