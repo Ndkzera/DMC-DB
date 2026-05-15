@@ -1,5 +1,5 @@
 """
-DMC Topografia — Servidor de Arquivos v3.0
+DMC Topografia — Hub de Serviços v3.0
 Nilton Jr · NDKZera
 
 Ponto de entrada da aplicação. Execute:
@@ -170,7 +170,7 @@ import pages.financeiro # noqa: F401, E402  (registra @ui.page("/financeiro"))
 # ── Inicialização ────────────────────────────────────────────────────
 if __name__ == "__main__":
     ui.run(
-        title="DMC Topografia · Drive",
+        title="DMC Topografia · Hub",
         dark=True,
         port=PORT,
         reload=False,

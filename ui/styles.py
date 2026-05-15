@@ -783,7 +783,7 @@ HEADER_HTML = """
       ">TOPOGRAFIA</span>
     </div>
     <div style="display:flex;align-items:center;gap:5px">
-      <span style="font:400 9px 'DM Mono',monospace;color:var(--dmc-muted2);letter-spacing:.1em;text-transform:uppercase">Servidor de Arquivos</span>
+      <span style="font:400 9px 'DM Mono',monospace;color:var(--dmc-muted2);letter-spacing:.1em;text-transform:uppercase">Hub de Serviços</span>
       <span style="width:3px;height:3px;border-radius:50%;background:rgba(74,222,128,.3);flex-shrink:0"></span>
       <span style="font:400 9px 'DM Mono',monospace;color:rgba(82,122,82,.5);letter-spacing:.06em">Levantamento · Drone · GIS</span>
     </div>
