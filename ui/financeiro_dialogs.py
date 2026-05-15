@@ -1990,19 +1990,16 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
 
             ui.html('<label class="dmc-label">Categoria</label>')
             _iids['categoria_id'] = _inp_id('cat')
-            _new_cat_box_id = _inp_id('newcatbox')
+            _new_cat_box_id  = _inp_id('newcatbox')
             _new_cat_nome_id = _inp_id('newcatnome')
             _new_cat_cor_id  = _inp_id('newcatcor')
             cat_cur = _st.get('categoria_id','')
-            # opção especial __new__ no final
             cat_opts_html = ''.join(
                 f'<option value="{k}"{"  selected" if k==cat_cur else ""}>{v}</option>'
                 for k, v in cat_opts
-            ) + '<option value="__new__" style="color:#FBBF24">+ Nova categoria…</option>'
+            ) + '<option value="__new__">+ Nova categoria…</option>'
             ui.html(
-                f'<select id="{_iids["categoria_id"]}" class="dmc-input" style="cursor:pointer" '
-                f'onchange="(function(s){{var box=document.getElementById(\'{_new_cat_box_id}\');'
-                f'if(box)box.style.display=s.value===\'__new__\'?\'flex\':\'none\';}})(this)">'
+                f'<select id="{_iids["categoria_id"]}" class="dmc-input" style="cursor:pointer">'
                 f'{cat_opts_html}</select>'
             )
             # caixa inline para criar categoria nova (oculta por padrão)
@@ -2022,6 +2019,24 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
                 f'{_cor_opts}</select>'
                 f'</div>'
             )
+
+            # listener via timer — confiável com html inserido via innerHTML
+            async def _setup_cat_toggle():
+                await ui.run_javascript(
+                    f'(function(){{'
+                    f'var sel=document.getElementById("{_iids["categoria_id"]}"),'
+                    f'box=document.getElementById("{_new_cat_box_id}");'
+                    f'if(!sel||!box)return;'
+                    f'sel.addEventListener("change",function(){{'
+                    f'box.style.display=this.value==="__new__"?"flex":"none";'
+                    f'if(this.value==="__new__"){{'
+                    f'var n=document.getElementById("{_new_cat_nome_id}");'
+                    f'if(n)n.focus();'
+                    f'}}'
+                    f'}});'
+                    f'}})()'
+                )
+            ui.timer(0.15, _setup_cat_toggle, once=True)
 
             ui.html('<label class="dmc-label">Obra vinculada</label>')
             _iids['obra_id'] = _inp_id('obra')
