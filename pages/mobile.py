@@ -330,7 +330,9 @@ def _render_home(state: MobileState) -> None:
                 'Agenda de hoje</div>'
             )
             agenda_area = ui.element("div").style("display:flex;flex-direction:column;gap:8px")
-            asyncio.ensure_future(_load_agenda_home(agenda_area, today))
+            async def _start_agenda():
+                await _load_agenda_home(agenda_area, today)
+            ui.timer(0.05, _start_agenda, once=True)
 
 
 async def _load_agenda_home(area, today: date) -> None:
@@ -545,8 +547,6 @@ def _render_clients(state: MobileState) -> None:
                             else:       cr.classes(remove="active")
                     c.on("click", _set)
 
-            results_area = ui.element("div").style("display:flex;flex-direction:column;gap:8px")
-
             # Barra de busca
             with ui.element("div").classes("mb-search-bar"):
                 si = (
@@ -561,6 +561,8 @@ def _render_clients(state: MobileState) -> None:
                 )
                 with sb:
                     ui.html('<span class="material-icons" style="color:#4ADE80;font-size:18px">search</span>')
+
+            results_area = ui.element("div").style("display:flex;flex-direction:column;gap:8px")
 
             def _do_search():
                 q = si.value.strip()
@@ -812,7 +814,6 @@ async def _render_mais(state: MobileState) -> None:
             )
             filter_state = {"v": "todas"}
             chip_refs: dict = {}
-            obras_area = ui.element("div").style("display:flex;flex-direction:column;gap:8px;margin-bottom:4px")
 
             def _render_obras():
                 obras_area.clear()
@@ -886,6 +887,7 @@ async def _render_mais(state: MobileState) -> None:
                         _render_obras()
                     c.on("click", _set)
 
+            obras_area = ui.element("div").style("display:flex;flex-direction:column;gap:8px;margin-bottom:4px")
             _render_obras()
 
             # Links rápidos
