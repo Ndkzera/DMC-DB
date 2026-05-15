@@ -3010,10 +3010,7 @@ def gerador_kml_dialog() -> None:
         return f'{alpha}{h[4:6]}{h[2:4]}{h[0:2]}'.lower()
 
     def _parse_coords_flex(text: str) -> list[tuple[float, float, str]]:
-        """(norte, leste, nome) — formatos aceitos por linha:
-        NORTE LESTE
-        PONTO NORTE LESTE
-        PONTO DESC NORTE LESTE  (tab ou ; como separador)"""
+        """(norte, leste, nome) — formato: PONTO NORTE LESTE (tab, ; ou espaço)."""
         out: list[tuple[float, float, str]] = []
         for raw in text.strip().splitlines():
             line = raw.strip()
@@ -3025,28 +3022,15 @@ def gerador_kml_dialog() -> None:
                     break
             else:
                 parts = line.split()
-            parts = [p.replace(',', '.') for p in parts if p.strip()]
-            if len(parts) < 2:
+            parts = [p for p in parts if p.strip()]
+            if len(parts) < 3:
                 continue
-            # Formato: NORTE LESTE
             try:
-                out.append((float(parts[0]), float(parts[1]), ''))
-                continue
+                norte = float(parts[1].replace(',', '.'))
+                leste = float(parts[2].replace(',', '.'))
+                out.append((norte, leste, parts[0]))
             except ValueError:
                 pass
-            # Formato: PONTO NORTE LESTE
-            if len(parts) == 3:
-                try:
-                    out.append((float(parts[1]), float(parts[2]), parts[0]))
-                    continue
-                except ValueError:
-                    pass
-            # Formato: PONTO DESC NORTE LESTE
-            if len(parts) >= 4:
-                try:
-                    out.append((float(parts[2]), float(parts[3]), parts[0]))
-                except ValueError:
-                    pass
         return out
 
     def _make_kml_poligono(
@@ -3293,7 +3277,7 @@ def gerador_kml_dialog() -> None:
 
             ui.html(
                 '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);margin-bottom:6px">'
-                'Cole por linha: <b>NORTE LESTE</b> &nbsp;ou&nbsp; <b>PONTO NORTE LESTE</b></div>'
+                'Cole por linha: <b>PONTO &nbsp; NORTE &nbsp; LESTE</b> (tab, ; ou espaço)</div>'
             )
             ui.html(
                 '<textarea id="kmlg-coords" rows="10" '
