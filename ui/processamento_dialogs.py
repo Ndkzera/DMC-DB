@@ -2814,24 +2814,25 @@ def kml_para_shapefile_dialog() -> None:
             )
 
             ui.html(
-                '<div id="kml-drop" style="'
-                'border:2px dashed var(--dmc-b2);border-radius:12px;'
-                'padding:32px 20px;text-align:center;cursor:pointer;'
-                'transition:border-color .2s,background .2s;background:var(--dmc-bg3)">'
-                '<span class="material-icons" style="font-size:40px;color:var(--dmc-muted2);'
-                'display:block;margin-bottom:8px">upload_file</span>'
-                '<div style="font:14px var(--dmc-fm);color:var(--dmc-muted2);margin-bottom:4px">'
-                'Arraste um arquivo KML ou KMZ</div>'
-                '<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-bottom:12px">ou</div>'
-                '<label style="cursor:pointer;display:inline-block;'
+                '<div style="display:flex;align-items:center;gap:14px;'
+                'padding:14px 16px;background:var(--dmc-bg3);'
+                'border:1px solid var(--dmc-b2);border-radius:12px">'
+                '<span class="material-icons" style="font-size:28px;color:#34D399;flex-shrink:0">'
+                'upload_file</span>'
+                '<div style="flex:1;min-width:0">'
+                '<div style="font:600 13px var(--dmc-fm);color:var(--dmc-text);margin-bottom:2px">'
+                'Selecionar arquivo KML ou KMZ</div>'
+                '<div id="kml-fname" style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+                'Nenhum arquivo selecionado</div>'
+                '</div>'
+                '<label style="cursor:pointer;flex-shrink:0;display:inline-block;'
                 'background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);'
                 'border-radius:8px;padding:7px 18px;'
                 'font:600 13px var(--dmc-fm);color:#34D399">'
-                'Selecionar Arquivo'
+                'Escolher arquivo'
                 '<input type="file" id="kml-input" accept=".kml,.kmz" style="display:none">'
                 '</label>'
-                '<div id="kml-fname" style="font:12px var(--dmc-mono);color:var(--dmc-muted2);'
-                'margin-top:10px;min-height:16px"></div>'
                 '</div>'
             )
 
@@ -2971,11 +2972,12 @@ def kml_para_shapefile_dialog() -> None:
 
         ui.timer(0.05, lambda: ui.run_javascript('''
             (function(){
-                var inp  = document.getElementById('kml-input');
-                var drop = document.getElementById('kml-drop');
-                var lbl  = document.getElementById('kml-fname');
-
-                function readFile(file){
+                var inp = document.getElementById('kml-input');
+                var lbl = document.getElementById('kml-fname');
+                if(!inp) return;
+                inp.addEventListener('change', function(){
+                    var file = inp.files[0];
+                    if(!file) return;
                     if(lbl) lbl.textContent = file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)';
                     var reader = new FileReader();
                     reader.onload = function(ev){
@@ -2983,38 +2985,7 @@ def kml_para_shapefile_dialog() -> None:
                         emitEvent('kml_file_loaded', {name: file.name, data: b64});
                     };
                     reader.readAsDataURL(file);
-                }
-
-                if(inp){
-                    inp.addEventListener('change', function(){
-                        if(inp.files[0]) readFile(inp.files[0]);
-                    });
-                }
-
-                if(drop){
-                    drop.addEventListener('dragover', function(e){
-                        e.preventDefault();
-                        e.stopPropagation();
-                        drop.style.borderColor = '#34D399';
-                        drop.style.background = 'rgba(52,211,153,.05)';
-                    });
-                    drop.addEventListener('dragleave', function(e){
-                        e.stopPropagation();
-                        drop.style.borderColor = 'var(--dmc-b2)';
-                        drop.style.background = 'var(--dmc-bg3)';
-                    });
-                    drop.addEventListener('drop', function(e){
-                        e.preventDefault();
-                        e.stopPropagation();
-                        drop.style.borderColor = 'var(--dmc-b2)';
-                        drop.style.background = 'var(--dmc-bg3)';
-                        var file = e.dataTransfer.files[0];
-                        if(file) readFile(file);
-                    });
-                    drop.addEventListener('click', function(){
-                        if(inp) inp.click();
-                    });
-                }
+                });
             })();
         '''), once=True)
 
