@@ -752,25 +752,41 @@ HEADER_HTML = """
   border-bottom:1px solid var(--dmc-b1);
   display:flex;align-items:center;padding:0 24px;gap:16px;
 ">
+  <!-- ── Logo mark ── -->
   <div style="
-    width:36px;height:36px;border:1.5px solid var(--dmc-green);border-radius:10px;
-    display:flex;align-items:center;justify-content:center;flex-shrink:0;
-    font:800 11px 'Syne',sans-serif;color:var(--dmc-green);letter-spacing:-.5px;
-  ">DMC</div>
-
-  <div style="display:flex;flex-direction:column;gap:1px;line-height:1">
-    <span style="font:700 15px 'Syne',sans-serif;color:var(--dmc-text);letter-spacing:.01em">DMC Topografia</span>
-    <span style="font:500 10px 'Inter',sans-serif;color:var(--dmc-muted2);letter-spacing:.1em;text-transform:uppercase">Servidor de Arquivos</span>
+    width:40px;height:40px;border-radius:11px;flex-shrink:0;
+    background:linear-gradient(150deg,rgba(74,222,128,.12) 0%,rgba(74,222,128,.04) 100%);
+    border:1.5px solid rgba(74,222,128,.3);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 2px 16px rgba(74,222,128,.1),inset 0 1px 0 rgba(74,222,128,.14);
+    position:relative;overflow:hidden;
+  ">
+    <div style="position:absolute;top:-10px;left:-6px;width:28px;height:28px;
+      background:radial-gradient(circle,rgba(74,222,128,.18) 0%,transparent 70%);
+      pointer-events:none"></div>
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" style="position:relative;z-index:1">
+      <path d="M11 3L19 17H3L11 3Z" fill="rgba(74,222,128,.11)" stroke="#4ADE80" stroke-width="1.3" stroke-linejoin="round"/>
+      <path d="M6 13Q11 9.5 16 13" stroke="rgba(74,222,128,.48)" stroke-width="0.85" fill="none" stroke-linecap="round"/>
+      <path d="M8 16.5Q11 14.8 14 16.5" stroke="rgba(74,222,128,.27)" stroke-width="0.85" fill="none" stroke-linecap="round"/>
+      <circle cx="11" cy="3" r="1.3" fill="#4ADE80"/>
+    </svg>
   </div>
 
-  <div style="width:1px;height:28px;background:var(--dmc-b1);margin:0 4px"></div>
-
-  <div style="font:400 11px 'Inter',sans-serif;color:var(--dmc-muted2);display:flex;align-items:center;gap:6px">
-    <span>Levantamento</span><span style="opacity:.4">·</span>
-    <span>Drone</span><span style="opacity:.4">·</span>
-    <span>Projetos</span><span style="opacity:.4">·</span>
-    <span>CAD</span><span style="opacity:.4">·</span>
-    <span>GIS</span>
+  <!-- ── Brand text ── -->
+  <div style="display:flex;flex-direction:column;gap:2px;line-height:1;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:7px">
+      <span style="font:800 17px 'Syne',sans-serif;color:var(--dmc-text);letter-spacing:.03em;line-height:1">DMC</span>
+      <span style="
+        font:700 8.5px 'Syne',sans-serif;color:var(--dmc-green);
+        letter-spacing:.22em;text-transform:uppercase;line-height:1;
+        border-left:1.5px solid rgba(74,222,128,.3);padding-left:7px;
+      ">TOPOGRAFIA</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:5px">
+      <span style="font:400 9px 'DM Mono',monospace;color:var(--dmc-muted2);letter-spacing:.1em;text-transform:uppercase">Servidor de Arquivos</span>
+      <span style="width:3px;height:3px;border-radius:50%;background:rgba(74,222,128,.3);flex-shrink:0"></span>
+      <span style="font:400 9px 'DM Mono',monospace;color:rgba(82,122,82,.5);letter-spacing:.06em">Levantamento · Drone · GIS</span>
+    </div>
   </div>
 
   <div style="flex:1"></div>
