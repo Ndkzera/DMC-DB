@@ -452,24 +452,59 @@ def render_main(state, on_delete, on_share, on_create_folder) -> None:
 
 async def render_async(state) -> None:
     """Executa list_dir em thread e depois renderiza — evita bloquear o event loop."""
+    from config import ROOT_DIR
+
+    query     = state.search
+    path_name = state.path.name or str(state.path)
+
+    def _cancel_and_root():
+        state.search = ""
+        state.path   = ROOT_DIR
+        state.render()
+
     state.area.clear()
     with state.area:
         from ui.sidebar import render_sidebar
         render_sidebar(state, state.set_filter, state._buscar_cliente_dialog)
         with ui.element("div").style(
-            "margin-left:260px;margin-top:60px;display:flex;"
-            "align-items:center;justify-content:center;height:200px;gap:12px;"
+            "margin-left:260px;margin-top:60px;padding:0 32px;"
+            "display:flex;flex-direction:column;align-items:center;"
+            "justify-content:center;gap:16px;"
         ):
-            ui.html(
-                '<span class="material-icons" style="font-size:28px;color:var(--dmc-muted2);'
-                'animation:spin 1s linear infinite">refresh</span>'
+            with ui.element("div").style(
+                "display:flex;align-items:center;gap:12px;"
+                "background:var(--dmc-bg3);border:1px solid var(--dmc-b1);"
+                "border-radius:14px;padding:18px 24px;max-width:480px;width:100%"
+            ):
+                ui.html(
+                    '<span class="material-icons" style="font-size:26px;color:var(--dmc-muted2);'
+                    'animation:spin 1s linear infinite;flex-shrink:0">refresh</span>'
+                )
+                with ui.element("div").style("flex:1;min-width:0"):
+                    ui.html(
+                        f'<div style="font:600 13px var(--dmc-fm);color:var(--dmc-text);'
+                        f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+                        f'Procurando: <span style="color:#FBBF24">{query}</span></div>'
+                        f'<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);margin-top:3px">'
+                        f'em <span style="color:var(--dmc-muted)">{path_name}</span> e subpastas</div>'
+                    )
+            ui.button(
+                "Cancelar e voltar à raiz",
+                icon="close",
+                on_click=_cancel_and_root,
+            ).props("flat no-caps").classes("dmc-btn dmc-btn-ghost").style(
+                "font:12px var(--dmc-fm);color:var(--dmc-muted2)"
             )
-            ui.html('<span style="font:12px var(--dmc-fm);color:var(--dmc-muted2)">Buscando...</span>')
 
     loop = asyncio.get_event_loop()
     state._search_results = await loop.run_in_executor(
-        _executor, list_dir, state.path, state.search
+        _executor, list_dir, state.path, query
     )
+
+    # Se o usuário cancelou durante a busca, não re-renderiza
+    if state.search != query:
+        state._search_results = None
+        return
 
     state.area.clear()
     with state.area:
