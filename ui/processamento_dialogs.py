@@ -2994,19 +2994,25 @@ def kml_para_shapefile_dialog() -> None:
                 if(drop){
                     drop.addEventListener('dragover', function(e){
                         e.preventDefault();
+                        e.stopPropagation();
                         drop.style.borderColor = '#34D399';
                         drop.style.background = 'rgba(52,211,153,.05)';
                     });
-                    drop.addEventListener('dragleave', function(){
+                    drop.addEventListener('dragleave', function(e){
+                        e.stopPropagation();
                         drop.style.borderColor = 'var(--dmc-b2)';
                         drop.style.background = 'var(--dmc-bg3)';
                     });
                     drop.addEventListener('drop', function(e){
                         e.preventDefault();
+                        e.stopPropagation();
                         drop.style.borderColor = 'var(--dmc-b2)';
                         drop.style.background = 'var(--dmc-bg3)';
                         var file = e.dataTransfer.files[0];
                         if(file) readFile(file);
+                    });
+                    drop.addEventListener('click', function(){
+                        if(inp) inp.click();
                     });
                 }
             })();
