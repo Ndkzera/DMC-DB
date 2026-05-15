@@ -1279,16 +1279,21 @@ def _filter_entries(entries: list, periodo: str, de: str, ate: str,
     return out
 
 
-def _build_report_html(entries: list, cfg: dict, periodo_label: str) -> str:
-    empresa   = cfg.get('razao_social') or 'Empresa'
-    cnpj_raw  = cfg.get('cnpj') or ''
-    cnpj_fmt  = (
+def _build_report_html(
+    entries: list, cfg: dict, periodo_label: str,
+    contas_pagar: list | None = None,
+    contas_receber: list | None = None,
+) -> str:
+    empresa  = cfg.get('razao_social') or 'Empresa'
+    cnpj_raw = cfg.get('cnpj') or ''
+    cnpj_fmt = (
         f'{cnpj_raw[:2]}.{cnpj_raw[2:5]}.{cnpj_raw[5:8]}/{cnpj_raw[8:12]}-{cnpj_raw[12:]}'
         if len(cnpj_raw) == 14 else cnpj_raw
     )
-    now_str   = datetime.now().strftime('%d/%m/%Y %H:%M')
-    aliq      = float(cfg.get('aliquota_iss', '5.00') or '5.00')
+    now_str  = datetime.now().strftime('%d/%m/%Y %H:%M')
+    aliq     = float(cfg.get('aliquota_iss', '5.00') or '5.00')
 
+    # ── NFS-e ──
     total     = sum(float(e.get('valor', 0) or 0) for e in entries)
     total_iss = round(total * aliq / 100, 2)
     total_liq = round(total - total_iss, 2)
@@ -1296,167 +1301,156 @@ def _build_report_html(entries: list, cfg: dict, periodo_label: str) -> str:
     n_homo    = sum(1 for e in entries if e.get('sucesso') and e.get('ambiente') == 'homologacao')
     n_erro    = sum(1 for e in entries if not e.get('sucesso'))
 
-    rows_html = ''
+    rows_nfse = ''
     for e in entries:
         sucesso = e.get('sucesso', False)
         amb     = e.get('ambiente', 'homologacao')
-        if not sucesso:
-            s_lbl, s_cls = 'ERRO',        'err'
-        elif amb == 'homologacao':
-            s_lbl, s_cls = 'HOMOLOGAÇÃO', 'hom'
-        else:
-            s_lbl, s_cls = 'EMITIDA',     'ok'
-
+        s_lbl, s_cls = ('ERRO','err') if not sucesso else (('EMITIDA','ok') if amb=='producao' else ('HOMOL.','hom'))
         val     = float(e.get('valor', 0) or 0)
         iss_v   = round(val * aliq / 100, 2)
-        emitido = (e.get('emitido_em', '') or '')[:10]
-        desc    = (e.get('descricao', '') or '')[:55]
-        if len(e.get('descricao', '') or '') > 55:
-            desc += '…'
-
-        rows_html += (
+        emitido = (e.get('emitido_em','') or '')[:10]
+        desc    = (e.get('descricao','') or '')[:55] + ('…' if len(e.get('descricao','') or '') > 55 else '')
+        rows_nfse += (
             f'<tr>'
-            f'<td class="tc num-col">#{e.get("numero", "—")}</td>'
-            f'<td>{e.get("tomador", "—")}<div class="desc">{desc}</div></td>'
+            f'<td class="tc num-col">#{e.get("numero","—")}</td>'
+            f'<td>{e.get("tomador","—")}<div class="desc">{desc}</div></td>'
             f'<td class="tr mono">{_fmt_brl(val)}</td>'
             f'<td class="tr mono muted">{_fmt_brl(iss_v)}</td>'
             f'<td class="tc"><span class="badge {s_cls}">{s_lbl}</span></td>'
             f'<td class="tc mono muted">{emitido}</td>'
             f'</tr>'
         )
+    if not rows_nfse:
+        rows_nfse = '<tr><td colspan="6" class="tc muted" style="padding:32px">Nenhuma NFS-e no período.</td></tr>'
 
-    if not rows_html:
-        rows_html = '<tr><td colspan="6" class="tc muted" style="padding:32px">Nenhuma NFS-e no período.</td></tr>'
+    # ── Contas a Pagar ──
+    cp_list  = contas_pagar or []
+    cp_total = sum(float(c.get('valor',0)) for c in cp_list)
+    cp_pago  = sum(float(c.get('valor',0)) for c in cp_list if c.get('status') == 'pago')
+    cp_pend  = sum(float(c.get('valor',0)) for c in cp_list if c.get('status') == 'pendente')
+
+    _ST_PAGAR_PRINT = {
+        'pendente':  ('pend','#b45309','#fffbeb','#fde68a'),
+        'pago':      ('ok',  '#15803d','#f0fdf4','#bbf7d0'),
+        'cancelado': ('can', '#6b7280','#f9fafb','#e5e7eb'),
+    }
+    rows_pagar = ''
+    for c in cp_list:
+        st = c.get('status','pendente')
+        cls_, col, bg, bord = _ST_PAGAR_PRINT.get(st, ('can','#6b7280','#f9fafb','#e5e7eb'))
+        cat  = c.get('categoria_nome') or '—'
+        obra = c.get('obra_nome') or '—'
+        rows_pagar += (
+            f'<tr>'
+            f'<td>{c.get("descricao","—")}</td>'
+            f'<td><span class="cat-tag">{cat}</span></td>'
+            f'<td class="muted" style="font-size:11px">{obra}</td>'
+            f'<td class="tr mono" style="color:#dc2626">{_fmt_brl(c.get("valor",0))}</td>'
+            f'<td class="tc mono muted">{c.get("data_venc","—")}</td>'
+            f'<td class="tc mono muted">{c.get("data_pag","—") if st=="pago" else "—"}</td>'
+            f'<td class="tc"><span class="badge" style="color:{col};background:{bg};border-color:{bord}">{st.upper()}</span></td>'
+            f'</tr>'
+        )
+    if not rows_pagar:
+        rows_pagar = '<tr><td colspan="7" class="tc muted" style="padding:24px">Nenhuma conta a pagar.</td></tr>'
+
+    # ── Contas a Receber ──
+    cr_list  = contas_receber or []
+    cr_total = sum(float(c.get('valor_total',0)) for c in cr_list)
+    cr_receb = sum(float(c.get('valor_pago',0))  for c in cr_list)
+    cr_pend  = round(cr_total - cr_receb, 2)
+
+    _ST_RECEBER_PRINT = {
+        'aberto':    ('#1d4ed8','#eff6ff','#bfdbfe'),
+        'parcial':   ('#b45309','#fffbeb','#fde68a'),
+        'quitado':   ('#15803d','#f0fdf4','#bbf7d0'),
+        'cancelado': ('#6b7280','#f9fafb','#e5e7eb'),
+    }
+    rows_receber = ''
+    for c in cr_list:
+        st  = c.get('status','aberto')
+        col, bg, bord = _ST_RECEBER_PRINT.get(st, ('#6b7280','#f9fafb','#e5e7eb'))
+        vt  = float(c.get('valor_total',0))
+        vp  = float(c.get('valor_pago',0))
+        pct = int(min(100, vp/vt*100)) if vt else 0
+        parc = c.get('parcelas',1)
+        npag = len(c.get('pagamentos',[]))
+        obra = c.get('obra_nome') or '—'
+        rows_receber += (
+            f'<tr>'
+            f'<td>{c.get("descricao","—")}</td>'
+            f'<td>{c.get("cliente_nome","—")}</td>'
+            f'<td class="muted" style="font-size:11px">{obra}</td>'
+            f'<td class="tr mono">{_fmt_brl(vt)}</td>'
+            f'<td class="tr mono" style="color:#15803d">{_fmt_brl(vp)}</td>'
+            f'<td class="tc" style="min-width:90px">'
+            f'<div style="height:5px;border-radius:3px;background:#e5e7eb;overflow:hidden;margin-bottom:3px">'
+            f'<div style="width:{pct}%;height:100%;background:{col}"></div></div>'
+            f'<span style="font:10px monospace;color:#6b7280">{npag}/{parc}</span>'
+            f'</td>'
+            f'<td class="tc mono muted">{c.get("data_venc","—")}</td>'
+            f'<td class="tc"><span class="badge" style="color:{col};background:{bg};border-color:{bord}">{st.upper()}</span></td>'
+            f'</tr>'
+        )
+    if not rows_receber:
+        rows_receber = '<tr><td colspan="8" class="tc muted" style="padding:24px">Nenhuma conta a receber.</td></tr>'
+
+    # ── Saldo ──
+    saldo = round(cr_receb - cp_pago, 2)
+    saldo_col = '#15803d' if saldo >= 0 else '#dc2626'
 
     return f'''<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>Relatório NFS-e — {empresa}</title>
+<title>Relatório Financeiro — {empresa}</title>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 13px; color: #1a1a1a; background: #f8f8f8;
-  }}
-  .wrap {{ max-width: 960px; margin: 0 auto; padding: 32px 24px; }}
-
-  /* ── Header ── */
-  .rpt-header {{
-    display: flex; justify-content: space-between; align-items: flex-start;
-    border-bottom: 3px solid #15803d; padding-bottom: 18px; margin-bottom: 24px;
-  }}
+  body {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; color: #1a1a1a; background: #f8f8f8; }}
+  .wrap {{ max-width: 980px; margin: 0 auto; padding: 32px 24px; }}
+  .rpt-header {{ display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #15803d; padding-bottom: 18px; margin-bottom: 24px; }}
   .rpt-empresa {{ font-size: 20px; font-weight: 700; color: #15803d; }}
   .rpt-cnpj    {{ font-size: 11px; color: #555; margin-top: 3px; font-family: monospace; }}
   .rpt-meta    {{ text-align: right; font-size: 11px; color: #555; line-height: 1.8; }}
   .rpt-periodo {{ font-weight: 600; color: #1a1a1a; font-size: 13px; }}
-
-  /* ── Summary cards ── */
-  .summary {{
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 12px; margin-bottom: 24px;
-  }}
-  .s-card {{
-    background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
-    padding: 14px 16px;
-  }}
-  .s-card .lbl {{
-    font-size: 9px; font-weight: 600; letter-spacing: .1em;
-    text-transform: uppercase; color: #6b7280; margin-bottom: 6px;
-  }}
+  .summary {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }}
+  .summary-2 {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }}
+  .s-card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; }}
+  .s-card .lbl {{ font-size: 9px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: #6b7280; margin-bottom: 6px; }}
   .s-card .val {{ font-size: 18px; font-weight: 700; }}
   .s-card .sub {{ font-size: 10px; color: #9ca3af; margin-top: 2px; }}
-  .c-green  {{ color: #15803d; }}
-  .c-blue   {{ color: #1d4ed8; }}
-  .c-amber  {{ color: #b45309; }}
-  .c-red    {{ color: #dc2626; }}
-  .c-slate  {{ color: #475569; }}
-
-  /* ── Table ── */
-  .rpt-card {{
-    background: #fff; border: 1px solid #e5e7eb;
-    border-radius: 12px; overflow: hidden; margin-bottom: 20px;
+  .c-green {{ color: #15803d; }} .c-blue {{ color: #1d4ed8; }} .c-amber {{ color: #b45309; }} .c-red {{ color: #dc2626; }}
+  .rpt-section-label {{
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: #374151; margin: 24px 0 10px; display: flex; align-items: center; gap: 8px;
   }}
-  .rpt-card-hdr {{
-    padding: 12px 18px; border-bottom: 1px solid #e5e7eb;
-    font-size: 11px; font-weight: 600; letter-spacing: .08em;
-    text-transform: uppercase; color: #374151;
-    display: flex; justify-content: space-between; align-items: center;
-  }}
+  .rpt-section-label::after {{ content:''; flex:1; height:1px; background:#e5e7eb; }}
+  .rpt-card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; margin-bottom: 20px; }}
+  .rpt-card-hdr {{ padding: 12px 18px; border-bottom: 1px solid #e5e7eb; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #374151; display: flex; justify-content: space-between; align-items: center; }}
   table {{ width: 100%; border-collapse: collapse; }}
-  thead th {{
-    padding: 10px 14px; text-align: left;
-    font-size: 10px; font-weight: 600; letter-spacing: .07em;
-    text-transform: uppercase; color: #6b7280;
-    background: #f9fafb; border-bottom: 1px solid #e5e7eb;
-  }}
-  tbody tr {{ border-bottom: 1px solid #f3f4f6; }}
-  tbody tr:last-child {{ border-bottom: none; }}
-  tbody tr:hover {{ background: #fafafa; }}
+  thead th {{ padding: 10px 14px; text-align: left; font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: #6b7280; background: #f9fafb; border-bottom: 1px solid #e5e7eb; }}
+  tbody tr {{ border-bottom: 1px solid #f3f4f6; }} tbody tr:last-child {{ border-bottom: none; }} tbody tr:hover {{ background: #fafafa; }}
   tbody td {{ padding: 9px 14px; vertical-align: middle; }}
-  .desc  {{ font-size: 11px; color: #6b7280; margin-top: 2px; }}
-  .mono  {{ font-family: 'DM Mono', 'Courier New', monospace; }}
-  .muted {{ color: #6b7280; }}
-  .tc    {{ text-align: center; }}
-  .tr    {{ text-align: right; }}
+  .desc {{ font-size: 11px; color: #6b7280; margin-top: 2px; }} .mono {{ font-family: 'DM Mono','Courier New',monospace; }}
+  .muted {{ color: #6b7280; }} .tc {{ text-align: center; }} .tr {{ text-align: right; }}
   .num-col {{ font-weight: 600; color: #15803d; font-family: monospace; }}
-
-  /* ── Badges ── */
-  .badge {{
-    display: inline-block; padding: 2px 8px; border-radius: 4px;
-    font-size: 9px; font-weight: 700; letter-spacing: .08em;
-    border: 1px solid;
-  }}
+  .badge {{ display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .08em; border: 1px solid; }}
   .badge.ok  {{ color: #15803d; background: #f0fdf4; border-color: #bbf7d0; }}
   .badge.hom {{ color: #b45309; background: #fffbeb; border-color: #fde68a; }}
   .badge.err {{ color: #dc2626; background: #fef2f2; border-color: #fecaca; }}
-
-  /* ── Totals row ── */
-  .totals-row td {{
-    padding: 10px 14px; font-weight: 700;
-    background: #f9fafb; border-top: 2px solid #e5e7eb;
-  }}
-
-  /* ── Footer ── */
-  .rpt-footer {{
-    font-size: 10px; color: #9ca3af; text-align: center;
-    border-top: 1px solid #e5e7eb; padding-top: 14px; margin-top: 8px;
-  }}
-
-  /* ── Print button (hidden on print) ── */
-  .print-bar {{
-    position: fixed; top: 0; left: 0; right: 0;
-    background: #15803d; color: #fff; padding: 10px 24px;
-    display: flex; align-items: center; gap: 16px;
-    font-size: 13px; font-weight: 500; z-index: 99;
-    box-shadow: 0 2px 8px rgba(0,0,0,.15);
-  }}
-  .print-bar button {{
-    background: #fff; color: #15803d; border: none;
-    border-radius: 6px; padding: 6px 18px;
-    font-size: 12px; font-weight: 700; cursor: pointer;
-  }}
-  .print-bar button:hover {{ background: #f0fdf4; }}
-  .print-bar .close-btn {{
-    background: rgba(255,255,255,.15); color: #fff;
-    margin-left: auto;
-  }}
-  @media print {{
-    .print-bar {{ display: none !important; }}
-    body {{ background: #fff; }}
-    .wrap {{ padding: 0; }}
-    .rpt-card {{ box-shadow: none; }}
-  }}
-  @media (max-width: 700px) {{
-    .summary {{ grid-template-columns: repeat(2, 1fr); }}
-    .hide-sm {{ display: none; }}
-  }}
+  .cat-tag {{ font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #f3f4f6; color: #374151; }}
+  .totals-row td {{ padding: 10px 14px; font-weight: 700; background: #f9fafb; border-top: 2px solid #e5e7eb; }}
+  .rpt-footer {{ font-size: 10px; color: #9ca3af; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 14px; margin-top: 8px; }}
+  .print-bar {{ position: fixed; top: 0; left: 0; right: 0; background: #15803d; color: #fff; padding: 10px 24px; display: flex; align-items: center; gap: 16px; font-size: 13px; font-weight: 500; z-index: 99; box-shadow: 0 2px 8px rgba(0,0,0,.15); }}
+  .print-bar button {{ background: #fff; color: #15803d; border: none; border-radius: 6px; padding: 6px 18px; font-size: 12px; font-weight: 700; cursor: pointer; }}
+  .print-bar .close-btn {{ background: rgba(255,255,255,.15); color: #fff; margin-left: auto; }}
+  @media print {{ .print-bar {{ display: none !important; }} body {{ background: #fff; }} .wrap {{ padding: 0; margin-top: 0 !important; }} }}
+  @media (max-width: 700px) {{ .summary,.summary-2 {{ grid-template-columns: repeat(2, 1fr); }} }}
 </style>
 </head>
 <body>
 <div class="print-bar">
-  <span>📄 Relatório NFS-e — {empresa}</span>
+  <span>📄 Relatório Financeiro — {empresa}</span>
   <button onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
   <button class="close-btn" onclick="window.close()">✕ Fechar</button>
 </div>
@@ -1471,63 +1465,111 @@ def _build_report_html(entries: list, cfg: dict, periodo_label: str) -> str:
     <div class="rpt-meta">
       <div class="rpt-periodo">{periodo_label}</div>
       <div>Gerado em {now_str}</div>
-      <div>{len(entries)} nota(s) no período</div>
     </div>
   </div>
 
+  <!-- Resumo geral -->
   <div class="summary">
     <div class="s-card">
-      <div class="lbl">Total bruto</div>
+      <div class="lbl">NFS-e emitidas</div>
       <div class="val c-green">{_fmt_brl(total)}</div>
-      <div class="sub">{len(entries)} nota(s)</div>
+      <div class="sub">{len(entries)} nota(s) · ISS {_fmt_brl(total_iss)}</div>
     </div>
     <div class="s-card">
-      <div class="lbl">ISS ({aliq:.2f}%)</div>
-      <div class="val c-amber">{_fmt_brl(total_iss)}</div>
-      <div class="sub">Total retido</div>
+      <div class="lbl">A Receber</div>
+      <div class="val c-blue">{_fmt_brl(cr_pend)}</div>
+      <div class="sub">de {_fmt_brl(cr_total)} total</div>
     </div>
     <div class="s-card">
-      <div class="lbl">Valor líquido</div>
-      <div class="val c-blue">{_fmt_brl(total_liq)}</div>
-      <div class="sub">Bruto − ISS</div>
+      <div class="lbl">A Pagar</div>
+      <div class="val c-amber">{_fmt_brl(cp_pend)}</div>
+      <div class="sub">de {_fmt_brl(cp_total)} total</div>
     </div>
     <div class="s-card">
-      <div class="lbl">Emitidas</div>
-      <div class="val c-green">{n_emit}</div>
-      <div class="sub">Produção</div>
-    </div>
-    <div class="s-card">
-      <div class="lbl">Homologação</div>
-      <div class="val c-amber">{n_homo}</div>
-      <div class="sub">{"+ " + str(n_erro) + " erro(s)" if n_erro else "sem erros"}</div>
+      <div class="lbl">Saldo (Recebido − Pago)</div>
+      <div class="val" style="color:{saldo_col}">{_fmt_brl(saldo)}</div>
+      <div class="sub">recebido {_fmt_brl(cr_receb)} · pago {_fmt_brl(cp_pago)}</div>
     </div>
   </div>
 
+  <!-- NFS-e -->
+  <div class="rpt-section-label">Notas Fiscais de Serviço</div>
   <div class="rpt-card">
     <div class="rpt-card-hdr">
-      <span>Notas Fiscais de Serviço — NFS-e</span>
-      <span style="font-weight:400;color:#9ca3af">{periodo_label}</span>
+      <span>NFS-e — {periodo_label}</span>
+      <span style="font-weight:400;color:#9ca3af">{len(entries)} nota(s) · Liq. {_fmt_brl(total_liq)}</span>
     </div>
     <table>
-      <thead>
-        <tr>
-          <th style="width:60px">Nº</th>
-          <th>Tomador / Descrição</th>
-          <th style="width:130px;text-align:right">Valor</th>
-          <th style="width:110px;text-align:right">ISS</th>
-          <th style="width:100px;text-align:center">Status</th>
-          <th style="width:100px;text-align:center">Emitida em</th>
-        </tr>
-      </thead>
+      <thead><tr>
+        <th style="width:60px">Nº</th><th>Tomador / Descrição</th>
+        <th style="width:120px;text-align:right">Valor</th>
+        <th style="width:100px;text-align:right">ISS</th>
+        <th style="width:90px;text-align:center">Status</th>
+        <th style="width:90px;text-align:center">Emitida</th>
+      </tr></thead>
       <tbody>
-        {rows_html}
+        {rows_nfse}
         <tr class="totals-row">
-          <td colspan="2" class="muted" style="font-size:11px">
-            Total — {len(entries)} nota(s)
-          </td>
+          <td colspan="2" class="muted" style="font-size:11px">Total — {len(entries)} nota(s)</td>
           <td class="tr mono c-green">{_fmt_brl(total)}</td>
           <td class="tr mono c-amber">{_fmt_brl(total_iss)}</td>
           <td colspan="2"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Contas a Pagar -->
+  <div class="rpt-section-label">Contas a Pagar</div>
+  <div class="rpt-card">
+    <div class="rpt-card-hdr">
+      <span>Contas a Pagar</span>
+      <span style="font-weight:400;color:#9ca3af">Total {_fmt_brl(cp_total)} · Pago {_fmt_brl(cp_pago)} · Pendente {_fmt_brl(cp_pend)}</span>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Descrição</th><th style="width:110px">Categoria</th>
+        <th style="width:130px">Obra</th>
+        <th style="width:110px;text-align:right">Valor</th>
+        <th style="width:90px;text-align:center">Vencimento</th>
+        <th style="width:90px;text-align:center">Pagamento</th>
+        <th style="width:80px;text-align:center">Status</th>
+      </tr></thead>
+      <tbody>
+        {rows_pagar}
+        <tr class="totals-row">
+          <td colspan="3" class="muted" style="font-size:11px">{len(cp_list)} conta(s)</td>
+          <td class="tr mono" style="color:#dc2626">{_fmt_brl(cp_total)}</td>
+          <td colspan="3"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Contas a Receber -->
+  <div class="rpt-section-label">Contas a Receber</div>
+  <div class="rpt-card">
+    <div class="rpt-card-hdr">
+      <span>Contas a Receber</span>
+      <span style="font-weight:400;color:#9ca3af">Total {_fmt_brl(cr_total)} · Recebido {_fmt_brl(cr_receb)} · Pendente {_fmt_brl(cr_pend)}</span>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Descrição</th><th style="width:130px">Cliente</th>
+        <th style="width:130px">Obra</th>
+        <th style="width:110px;text-align:right">Total</th>
+        <th style="width:110px;text-align:right">Recebido</th>
+        <th style="width:80px;text-align:center">Parcelas</th>
+        <th style="width:90px;text-align:center">Vencimento</th>
+        <th style="width:80px;text-align:center">Status</th>
+      </tr></thead>
+      <tbody>
+        {rows_receber}
+        <tr class="totals-row">
+          <td colspan="3" class="muted" style="font-size:11px">{len(cr_list)} conta(s)</td>
+          <td class="tr mono">{_fmt_brl(cr_total)}</td>
+          <td class="tr mono c-green">{_fmt_brl(cr_receb)}</td>
+          <td colspan="3"></td>
         </tr>
       </tbody>
     </table>
@@ -1545,12 +1587,14 @@ def _build_report_html(entries: list, cfg: dict, periodo_label: str) -> str:
 def relatorio_financeiro_dialog() -> None:
     cfg = load_config()
     _st = {
-        'periodo':    'mes_atual',
-        'de':         '',
-        'ate':        '',
+        'periodo':     'mes_atual',
+        'de':          '',
+        'ate':         '',
         'inc_emitida': True,
         'inc_homo':    True,
         'inc_erro':    True,
+        'inc_pagar':   True,
+        'inc_receber': True,
     }
 
     _PERIODOS = [
@@ -1633,11 +1677,11 @@ def relatorio_financeiro_dialog() -> None:
                 )
             ui.timer(0.15, _setup_periodo, once=True)
 
-            # Filtro de status
+            # Filtro de status NFS-e
             ui.html(
                 '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
                 'letter-spacing:.14em;text-transform:uppercase;margin-top:4px;margin-bottom:10px">'
-                'Incluir status</div>'
+                'Incluir NFS-e por status</div>'
             )
             ui.html(
                 '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">'
@@ -1659,6 +1703,25 @@ def relatorio_financeiro_dialog() -> None:
                 '</div>'
             )
 
+            # Incluir seções no relatório
+            ui.html(
+                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                'letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">'
+                'Incluir seções</div>'
+            )
+            ui.html(
+                '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:4px">'
+                '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;'
+                'font:13px var(--dmc-fm);color:var(--dmc-text)">'
+                '<input type="checkbox" id="rfi-inc-pagar" checked style="accent-color:#F87171;width:15px;height:15px">'
+                ' <span style="color:#F87171;font:600 10px var(--dmc-mono)">CONTAS A PAGAR</span></label>'
+                '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;'
+                'font:13px var(--dmc-fm);color:var(--dmc-text)">'
+                '<input type="checkbox" id="rfi-inc-receber" checked style="accent-color:#4ADE80;width:15px;height:15px">'
+                ' <span style="color:#4ADE80;font:600 10px var(--dmc-mono)">CONTAS A RECEBER</span></label>'
+                '</div>'
+            )
+
         with ui.element('div').style(
             'padding:14px 24px;border-top:1px solid var(--dmc-b1);'
             'display:flex;justify-content:flex-end;gap:10px;flex-shrink:0'
@@ -1666,6 +1729,7 @@ def relatorio_financeiro_dialog() -> None:
             ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
 
             async def _gerar():
+                from services.financeiro import load_contas_pagar, load_contas_receber
                 vals = await ui.run_javascript(
                     f'(function(){{'
                     f'var s=document.getElementById("{_per_id}");'
@@ -1676,6 +1740,8 @@ def relatorio_financeiro_dialog() -> None:
                     f'inc_emitida:!!(document.getElementById("rfi-emit")||{{}}).checked,'
                     f'inc_homo:!!(document.getElementById("rfi-homo")||{{}}).checked,'
                     f'inc_erro:!!(document.getElementById("rfi-erro")||{{}}).checked,'
+                    f'inc_pagar:!!(document.getElementById("rfi-inc-pagar")||{{}}).checked,'
+                    f'inc_receber:!!(document.getElementById("rfi-inc-receber")||{{}}).checked,'
                     f'}};}})()'
                 )
                 if isinstance(vals, dict):
@@ -1693,10 +1759,14 @@ def relatorio_financeiro_dialog() -> None:
                 if _st['periodo'] == 'personalizado' and (_st['de'] or _st['ate']):
                     periodo_label = f'{_st["de"] or "?"} → {_st["ate"] or "?"}'
 
-                html = _build_report_html(entries, cfg, periodo_label)
+                cp = load_contas_pagar()   if _st.get('inc_pagar',   True) else []
+                cr = load_contas_receber() if _st.get('inc_receber',  True) else []
+
+                html = _build_report_html(entries, cfg, periodo_label,
+                                          contas_pagar=cp, contas_receber=cr)
                 html_b64 = base64.b64encode(html.encode('utf-8')).decode()
                 await ui.run_javascript(f'''
-                    const w = window.open('', '_blank', 'width=1000,height=720,noopener,noreferrer');
+                    const w = window.open('', '_blank', 'width=1060,height=760,noopener,noreferrer');
                     const html = atob('{html_b64}');
                     w.document.open();
                     w.document.write(html);
@@ -1706,5 +1776,625 @@ def relatorio_financeiro_dialog() -> None:
             ui.button('Gerar Relatório', icon='bar_chart', on_click=_gerar).props(
                 'unelevated no-caps'
             ).classes('dmc-btn dmc-btn-primary')
+
+    dlg.open()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONTAS A PAGAR
+# ═══════════════════════════════════════════════════════════════════════════
+
+_CAT_COLORS = [
+    "#4ADE80","#FBBF24","#60A5FA","#F87171","#C4B5FD",
+    "#FB923C","#34D399","#E879F9","#38BDF8","#A3E635",
+]
+
+
+def categorias_pagar_dialog(on_save=None) -> None:
+    """CRUD de categorias de contas a pagar."""
+    from services.financeiro import (
+        load_categorias_pagar, add_categoria_pagar,
+        update_categoria_pagar, delete_categoria_pagar,
+    )
+
+    with ui.dialog().props('persistent') as dlg, ui.card().style(
+        'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
+        'border-radius:18px!important;padding:0;'
+        'width:min(500px,97vw)!important;max-height:94vh;'
+        'display:flex;flex-direction:column;color:var(--dmc-text)!important;position:relative;'
+    ):
+        ui.button(icon='close', on_click=dlg.close).props('flat round dense').style(
+            'color:var(--dmc-muted);position:absolute;top:12px;right:12px;z-index:10;'
+        )
+
+        with ui.element('div').style(
+            'padding:18px 24px;border-bottom:1px solid var(--dmc-b1);'
+            'display:flex;align-items:center;gap:14px;flex-shrink:0;padding-right:52px;'
+        ):
+            ui.html(
+                '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;'
+                'background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);'
+                'display:flex;align-items:center;justify-content:center;">'
+                '<span class="material-icons" style="font-size:20px;color:#FBBF24">label</span></div>'
+            )
+            with ui.element('div'):
+                ui.html('<div style="font:700 16px var(--dmc-fd);color:var(--dmc-text)">Categorias de Despesa</div>')
+                ui.html('<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">Tipos de conta a pagar — gasolina, vale alimentação, etc.</div>')
+
+        list_area = ui.element('div').style(
+            'padding:16px 24px;overflow-y:auto;flex:1;min-height:0;'
+            'display:flex;flex-direction:column;gap:8px'
+        )
+
+        def _redraw():
+            list_area.clear()
+            cats = load_categorias_pagar()
+            with list_area:
+                if not cats:
+                    ui.html(
+                        '<div style="text-align:center;padding:32px;'
+                        'font:11px var(--dmc-mono);color:var(--dmc-muted2)">Nenhuma categoria cadastrada</div>'
+                    )
+                for cat in cats:
+                    with ui.element('div').style(
+                        'display:flex;align-items:center;gap:10px;'
+                        'padding:10px 14px;background:rgba(255,255,255,.03);'
+                        'border:1px solid var(--dmc-b1);border-radius:10px;'
+                    ):
+                        cor = cat.get('cor','#8BAA8B')
+                        ui.html(
+                            f'<div style="width:14px;height:14px;border-radius:4px;'
+                            f'flex-shrink:0;background:{cor}"></div>'
+                        )
+                        ui.html(
+                            f'<span style="font:500 13px var(--dmc-fm);'
+                            f'color:var(--dmc-text);flex:1">{cat["nome"]}</span>'
+                        )
+                        cid = cat['id']
+                        del_btn = ui.element('button').style(
+                            'width:28px;height:28px;border-radius:6px;cursor:pointer;'
+                            'background:transparent;border:1px solid var(--dmc-b1);'
+                            'display:inline-flex;align-items:center;justify-content:center;'
+                            'color:#F87171;border-color:rgba(248,113,113,.2)'
+                        )
+                        with del_btn:
+                            ui.html('<span class="material-icons" style="font-size:14px">delete</span>')
+                        del_btn.on('click', lambda c=cid: (_del(c)))
+
+                def _del(cid):
+                    delete_categoria_pagar(cid)
+                    _redraw()
+                    if on_save:
+                        on_save()
+
+        _redraw()
+
+        with ui.element('div').style(
+            'padding:14px 24px;border-top:1px solid var(--dmc-b1);'
+            'display:flex;flex-direction:column;gap:10px;flex-shrink:0'
+        ):
+            ui.html('<label class="dmc-label">Nova categoria</label>')
+            _new_nome_id  = f'cat-nome-{id(dlg)}'
+            _new_cor_ref  = {'v': _CAT_COLORS[0]}
+            with ui.element('div').style('display:flex;gap:8px;align-items:center'):
+                ui.html(
+                    f'<input id="{_new_nome_id}" class="dmc-input" placeholder="ex: Gasolina" '
+                    f'style="flex:1">'
+                )
+                cor_box = ui.element('div').style(
+                    f'width:34px;height:34px;border-radius:8px;flex-shrink:0;cursor:pointer;'
+                    f'background:{_CAT_COLORS[0]};border:2px solid rgba(255,255,255,.12)'
+                )
+                with ui.element('div').style('display:flex;gap:6px;flex-wrap:wrap;max-width:200px'):
+                    for c in _CAT_COLORS:
+                        dot = ui.element('div').style(
+                            f'width:18px;height:18px;border-radius:5px;cursor:pointer;'
+                            f'background:{c};border:2px solid transparent'
+                        )
+                        def _pick(col=c):
+                            _new_cor_ref['v'] = col
+                            cor_box.style(
+                                f'width:34px;height:34px;border-radius:8px;flex-shrink:0;cursor:pointer;'
+                                f'background:{col};border:2px solid rgba(255,255,255,.12)'
+                            )
+                        dot.on('click', _pick)
+
+            async def _add_cat():
+                nome = await ui.run_javascript(
+                    f'(document.getElementById("{_new_nome_id}")||{{}}).value||""'
+                )
+                nome = (nome or '').strip()
+                if not nome:
+                    return
+                add_categoria_pagar(nome, _new_cor_ref['v'])
+                await ui.run_javascript(
+                    f'var e=document.getElementById("{_new_nome_id}");if(e)e.value="";'
+                )
+                _redraw()
+                if on_save:
+                    on_save()
+
+            with ui.element('div').style('display:flex;justify-content:flex-end;gap:10px'):
+                ui.button('Fechar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
+                ui.button('Adicionar', icon='add', on_click=_add_cat).props(
+                    'unelevated no-caps'
+                ).classes('dmc-btn dmc-btn-primary').style(
+                    'background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.35);color:#FBBF24'
+                )
+
+    dlg.open()
+
+
+def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
+    """Cadastro / edição de conta a pagar."""
+    from services.financeiro import (
+        load_categorias_pagar, add_conta_pagar, update_conta_pagar,
+    )
+    from services.obras import load_obras
+
+    editando = conta is not None
+    cats  = load_categorias_pagar()
+    obras = load_obras()
+    obra_opts = [('', '— Nenhuma —')] + [(o['id'], o.get('cliente_nome','') + ' · ' + o.get('obra_log','')) for o in obras]
+    cat_opts  = [('', '— Sem categoria —')] + [(c['id'], c['nome']) for c in cats]
+
+    _st: dict = dict(conta) if conta else {}
+
+    with ui.dialog().props('persistent') as dlg, ui.card().style(
+        'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
+        'border-radius:18px!important;padding:0;'
+        'width:min(560px,97vw)!important;max-height:94vh;'
+        'display:flex;flex-direction:column;color:var(--dmc-text)!important;position:relative;'
+    ):
+        ui.button(icon='close', on_click=dlg.close).props('flat round dense').style(
+            'color:var(--dmc-muted);position:absolute;top:12px;right:12px;z-index:10;'
+        )
+
+        with ui.element('div').style(
+            'padding:18px 24px;border-bottom:1px solid var(--dmc-b1);'
+            'display:flex;align-items:center;gap:14px;flex-shrink:0;padding-right:52px;'
+        ):
+            ui.html(
+                '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;'
+                'background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);'
+                'display:flex;align-items:center;justify-content:center;">'
+                '<span class="material-icons" style="font-size:20px;color:#F87171">arrow_circle_down</span></div>'
+            )
+            with ui.element('div'):
+                ui.html(f'<div style="font:700 16px var(--dmc-fd);color:var(--dmc-text)">{"Editar" if editando else "Nova"} Conta a Pagar</div>')
+                ui.html('<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">Registre despesas e vincule a obras</div>')
+
+        _iids = {}
+
+        def _inp_id(key): return f'cp-{key}-{id(dlg)}'
+
+        with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:12px'):
+
+            ui.html('<label class="dmc-label">Descrição *</label>')
+            _iids['descricao'] = _inp_id('desc')
+            val = (_st.get('descricao') or '').replace('"','&quot;')
+            ui.html(f'<input id="{_iids["descricao"]}" class="dmc-input" placeholder="ex: Abastecimento" value="{val}">')
+
+            with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
+                with ui.element('div'):
+                    ui.html('<label class="dmc-label">Valor (R$) *</label>')
+                    _iids['valor'] = _inp_id('val')
+                    vval = str(_st.get('valor','') or '')
+                    ui.html(f'<input id="{_iids["valor"]}" class="dmc-input" type="number" step="0.01" min="0" placeholder="0,00" value="{vval}">')
+                with ui.element('div'):
+                    ui.html('<label class="dmc-label">Vencimento</label>')
+                    _iids['data_venc'] = _inp_id('venc')
+                    vvenc = (_st.get('data_venc') or '')
+                    ui.html(f'<input id="{_iids["data_venc"]}" class="dmc-input" type="date" value="{vvenc}">')
+
+            ui.html('<label class="dmc-label">Categoria</label>')
+            _iids['categoria_id'] = _inp_id('cat')
+            cat_cur = _st.get('categoria_id','')
+            cat_opts_html = ''.join(
+                f'<option value="{k}"{"  selected" if k==cat_cur else ""}>{v}</option>'
+                for k, v in cat_opts
+            )
+            ui.html(f'<select id="{_iids["categoria_id"]}" class="dmc-input" style="cursor:pointer">{cat_opts_html}</select>')
+
+            ui.html('<label class="dmc-label">Obra vinculada</label>')
+            _iids['obra_id'] = _inp_id('obra')
+            obra_cur = _st.get('obra_id','')
+            obra_opts_html = ''.join(
+                f'<option value="{k}"{"  selected" if k==obra_cur else ""}>{v}</option>'
+                for k, v in obra_opts
+            )
+            ui.html(f'<select id="{_iids["obra_id"]}" class="dmc-input" style="cursor:pointer">{obra_opts_html}</select>')
+
+            if editando:
+                ui.html('<label class="dmc-label">Status</label>')
+                _iids['status'] = _inp_id('status')
+                st_cur = _st.get('status','pendente')
+                st_opts_html = ''.join(
+                    f'<option value="{k}"{"  selected" if k==st_cur else ""}>{v}</option>'
+                    for k, v in [('pendente','Pendente'),('pago','Pago'),('cancelado','Cancelado')]
+                )
+                ui.html(f'<select id="{_iids["status"]}" class="dmc-input" style="cursor:pointer">{st_opts_html}</select>')
+
+                ui.html('<label class="dmc-label">Data de pagamento</label>')
+                _iids['data_pag'] = _inp_id('pag')
+                vpag = _st.get('data_pag','')
+                ui.html(f'<input id="{_iids["data_pag"]}" class="dmc-input" type="date" value="{vpag}">')
+
+            ui.html('<label class="dmc-label">Observação</label>')
+            _iids['observacao'] = _inp_id('obs')
+            vobs = (_st.get('observacao') or '').replace('"','&quot;')
+            ui.html(f'<input id="{_iids["observacao"]}" class="dmc-input" placeholder="Opcional" value="{vobs}">')
+
+        with ui.element('div').style(
+            'padding:14px 24px;border-top:1px solid var(--dmc-b1);'
+            'display:flex;justify-content:flex-end;gap:10px;flex-shrink:0'
+        ):
+            ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
+
+            async def _salvar():
+                js_reads = '{' + ','.join(
+                    f'"{k}": (document.getElementById("{v}")||{{}}).value||""'
+                    for k, v in _iids.items()
+                ) + '}'
+                vals = await ui.run_javascript(f'({js_reads})')
+                if not isinstance(vals, dict):
+                    return
+                desc = (vals.get('descricao') or '').strip()
+                if not desc:
+                    ui.notify('Informe a descrição', color='negative')
+                    return
+                try:
+                    valor = float(str(vals.get('valor') or '0').replace(',','.'))
+                except ValueError:
+                    valor = 0.0
+
+                obra_id   = vals.get('obra_id','')
+                obra_nome = ''
+                if obra_id:
+                    ob = next((o for o in obras if o['id'] == obra_id), None)
+                    if ob:
+                        obra_nome = ob.get('cliente_nome','') + (' · ' + ob.get('obra_log','') if ob.get('obra_log') else '')
+
+                cat_id = vals.get('categoria_id','')
+
+                if editando:
+                    update_conta_pagar(
+                        _st['id'],
+                        descricao=desc, categoria_id=cat_id, obra_id=obra_id,
+                        obra_nome=obra_nome, valor=valor,
+                        data_venc=vals.get('data_venc',''),
+                        data_pag=vals.get('data_pag',''),
+                        status=vals.get('status','pendente'),
+                        observacao=vals.get('observacao',''),
+                    )
+                    ui.notify('Conta atualizada', color='positive')
+                else:
+                    add_conta_pagar({
+                        'descricao': desc, 'categoria_id': cat_id,
+                        'obra_id': obra_id, 'obra_nome': obra_nome,
+                        'valor': valor, 'data_venc': vals.get('data_venc',''),
+                        'observacao': vals.get('observacao',''),
+                    })
+                    ui.notify('Conta adicionada', color='positive')
+
+                dlg.close()
+                if on_save:
+                    on_save()
+
+            ui.button('Salvar', icon='save', on_click=_salvar).props(
+                'unelevated no-caps'
+            ).classes('dmc-btn dmc-btn-primary').style(
+                'background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.35);color:#F87171'
+            )
+
+    dlg.open()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONTAS A RECEBER
+# ═══════════════════════════════════════════════════════════════════════════
+
+def nova_conta_receber_dialog(on_save=None) -> None:
+    """Cadastro de conta a receber com parcelas."""
+    from services.financeiro import add_conta_receber
+    from services.clientes import load_clientes
+    from services.obras import load_obras
+
+    clientes = load_clientes()
+    obras    = load_obras()
+    cli_opts  = [('','— Nenhum —')] + [(c['cpf'], c['nome']) for c in clientes]
+    obra_opts = [('','— Nenhuma —')] + [(o['id'], o.get('cliente_nome','') + ' · ' + o.get('obra_log','')) for o in obras]
+
+    with ui.dialog().props('persistent') as dlg, ui.card().style(
+        'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
+        'border-radius:18px!important;padding:0;'
+        'width:min(560px,97vw)!important;max-height:94vh;'
+        'display:flex;flex-direction:column;color:var(--dmc-text)!important;position:relative;'
+    ):
+        ui.button(icon='close', on_click=dlg.close).props('flat round dense').style(
+            'color:var(--dmc-muted);position:absolute;top:12px;right:12px;z-index:10;'
+        )
+
+        with ui.element('div').style(
+            'padding:18px 24px;border-bottom:1px solid var(--dmc-b1);'
+            'display:flex;align-items:center;gap:14px;flex-shrink:0;padding-right:52px;'
+        ):
+            ui.html(
+                '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;'
+                'background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.25);'
+                'display:flex;align-items:center;justify-content:center;">'
+                '<span class="material-icons" style="font-size:20px;color:#4ADE80">arrow_circle_up</span></div>'
+            )
+            with ui.element('div'):
+                ui.html('<div style="font:700 16px var(--dmc-fd);color:var(--dmc-text)">Nova Conta a Receber</div>')
+                ui.html('<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">Registre valores a receber — parcele se necessário</div>')
+
+        _iids = {}
+        def _iid(k): return f'cr-{k}-{id(dlg)}'
+
+        with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:12px'):
+
+            ui.html('<label class="dmc-label">Descrição *</label>')
+            _iids['descricao'] = _iid('desc')
+            ui.html(f'<input id="{_iids["descricao"]}" class="dmc-input" placeholder="ex: Levantamento topográfico — Lote 12">')
+
+            with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
+                with ui.element('div'):
+                    ui.html('<label class="dmc-label">Valor total (R$) *</label>')
+                    _iids['valor_total'] = _iid('vt')
+                    ui.html(f'<input id="{_iids["valor_total"]}" class="dmc-input" type="number" step="0.01" min="0" placeholder="0,00">')
+                with ui.element('div'):
+                    ui.html('<label class="dmc-label">Nº de parcelas</label>')
+                    _iids['parcelas'] = _iid('parc')
+                    ui.html(f'<input id="{_iids["parcelas"]}" class="dmc-input" type="number" min="1" value="1">')
+
+            ui.html('<label class="dmc-label">Cliente</label>')
+            _iids['cliente_cpf'] = _iid('cli')
+            cli_opts_html = ''.join(
+                f'<option value="{k}">{v}</option>'
+                for k, v in cli_opts
+            )
+            ui.html(f'<select id="{_iids["cliente_cpf"]}" class="dmc-input" style="cursor:pointer">{cli_opts_html}</select>')
+
+            ui.html('<label class="dmc-label">Obra vinculada</label>')
+            _iids['obra_id'] = _iid('obra')
+            obra_opts_html = ''.join(
+                f'<option value="{k}">{v}</option>'
+                for k, v in obra_opts
+            )
+            ui.html(f'<select id="{_iids["obra_id"]}" class="dmc-input" style="cursor:pointer">{obra_opts_html}</select>')
+
+            ui.html('<label class="dmc-label">Vencimento</label>')
+            _iids['data_venc'] = _iid('venc')
+            ui.html(f'<input id="{_iids["data_venc"]}" class="dmc-input" type="date">')
+
+            ui.html('<label class="dmc-label">Observação</label>')
+            _iids['observacao'] = _iid('obs')
+            ui.html(f'<input id="{_iids["observacao"]}" class="dmc-input" placeholder="Opcional">')
+
+        with ui.element('div').style(
+            'padding:14px 24px;border-top:1px solid var(--dmc-b1);'
+            'display:flex;justify-content:flex-end;gap:10px;flex-shrink:0'
+        ):
+            ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
+
+            async def _salvar():
+                js_reads = '{' + ','.join(
+                    f'"{k}": (document.getElementById("{v}")||{{}}).value||""'
+                    for k, v in _iids.items()
+                ) + '}'
+                vals = await ui.run_javascript(f'({js_reads})')
+                if not isinstance(vals, dict):
+                    return
+                desc = (vals.get('descricao') or '').strip()
+                if not desc:
+                    ui.notify('Informe a descrição', color='negative')
+                    return
+                try:
+                    vt = float(str(vals.get('valor_total','0')).replace(',','.'))
+                except ValueError:
+                    vt = 0.0
+                try:
+                    parc = max(1, int(vals.get('parcelas','1') or 1))
+                except ValueError:
+                    parc = 1
+
+                cpf   = vals.get('cliente_cpf','')
+                cli   = next((c for c in clientes if c['cpf'] == cpf), None)
+                cnome = cli['nome'] if cli else ''
+
+                obra_id   = vals.get('obra_id','')
+                obra_nome = ''
+                if obra_id:
+                    ob = next((o for o in obras if o['id'] == obra_id), None)
+                    if ob:
+                        obra_nome = ob.get('cliente_nome','') + (' · ' + ob.get('obra_log','') if ob.get('obra_log') else '')
+
+                add_conta_receber({
+                    'descricao': desc, 'cliente_nome': cnome, 'cliente_cpf': cpf,
+                    'obra_id': obra_id, 'obra_nome': obra_nome,
+                    'valor_total': vt, 'parcelas': parc,
+                    'data_venc': vals.get('data_venc',''),
+                })
+                ui.notify('Conta adicionada', color='positive')
+                dlg.close()
+                if on_save:
+                    on_save()
+
+            ui.button('Salvar', icon='save', on_click=_salvar).props(
+                'unelevated no-caps'
+            ).classes('dmc-btn dmc-btn-primary')
+
+    dlg.open()
+
+
+def registrar_pagamento_dialog(conta: dict, on_save=None, modo: str = "pagar") -> None:
+    """Registra parcelas / exibe histórico de pagamentos de uma conta a receber."""
+    from services.financeiro import add_pagamento, delete_pagamento
+
+    vt      = float(conta.get('valor_total', 0))
+    vp      = float(conta.get('valor_pago', 0))
+    restante = round(vt - vp, 2)
+    parc    = int(conta.get('parcelas', 1))
+    pags    = conta.get('pagamentos', [])
+
+    def _fmt(v): return f'R$ {float(v):,.2f}'.replace(',','X').replace('.', ',').replace('X','.')
+
+    with ui.dialog().props('persistent') as dlg, ui.card().style(
+        'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
+        'border-radius:18px!important;padding:0;'
+        'width:min(580px,97vw)!important;max-height:94vh;'
+        'display:flex;flex-direction:column;color:var(--dmc-text)!important;position:relative;'
+    ):
+        ui.button(icon='close', on_click=dlg.close).props('flat round dense').style(
+            'color:var(--dmc-muted);position:absolute;top:12px;right:12px;z-index:10;'
+        )
+
+        # Header
+        with ui.element('div').style(
+            'padding:18px 24px;border-bottom:1px solid var(--dmc-b1);'
+            'display:flex;align-items:center;gap:14px;flex-shrink:0;padding-right:52px;'
+        ):
+            ui.html(
+                '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;'
+                'background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.25);'
+                'display:flex;align-items:center;justify-content:center;">'
+                '<span class="material-icons" style="font-size:20px;color:#4ADE80">payments</span></div>'
+            )
+            with ui.element('div').style('flex:1;min-width:0'):
+                ui.html(f'<div style="font:700 16px var(--dmc-fd);color:var(--dmc-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{conta.get("descricao","—")}</div>')
+                ui.html(f'<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">{conta.get("cliente_nome","—")}</div>')
+
+        with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:14px'):
+
+            # Resumo financeiro
+            pct = int(min(100, (vp/vt*100))) if vt else 0
+            st  = conta.get('status','aberto')
+            from pages.financeiro import _STATUS_RECEBER
+            cor, bg = _STATUS_RECEBER.get(st, ('#8BAA8B','rgba(139,170,139,.08)'))
+
+            ui.html(
+                f'<div style="background:rgba(255,255,255,.03);border:1px solid var(--dmc-b1);'
+                f'border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:8px">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                f'<span style="font:11px var(--dmc-mono);color:var(--dmc-muted2)">TOTAL</span>'
+                f'<span style="font:700 16px var(--dmc-fd);color:#DCE8DC">{_fmt(vt)}</span>'
+                f'</div>'
+                f'<div style="height:6px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden">'
+                f'<div style="width:{pct}%;height:100%;background:{cor};border-radius:3px;transition:width .3s"></div>'
+                f'</div>'
+                f'<div style="display:flex;justify-content:space-between">'
+                f'<span style="font:11px var(--dmc-mono);color:{cor}">Recebido: {_fmt(vp)}</span>'
+                f'<span style="font:11px var(--dmc-mono);color:var(--dmc-muted2)">Restante: {_fmt(restante)}</span>'
+                f'</div>'
+                f'<div style="display:flex;align-items:center;gap:6px">'
+                f'<span style="font:700 9px var(--dmc-mono);background:{bg};color:{cor};'
+                f'padding:2px 8px;border-radius:4px;border:1px solid {cor}44">{st.upper()}</span>'
+                f'<span style="font:11px var(--dmc-mono);color:var(--dmc-muted2)">'
+                f'{len(pags)}/{parc} parcela{"s" if parc!=1 else ""} registrada{"s" if len(pags)!=1 else ""}'
+                f'</span></div>'
+                f'</div>'
+            )
+
+            # Histórico de pagamentos
+            pags_area = ui.element('div').style('display:flex;flex-direction:column;gap:6px')
+
+            def _draw_pags():
+                pags_area.clear()
+                with pags_area:
+                    if not pags:
+                        ui.html('<div style="text-align:center;padding:20px;font:11px var(--dmc-mono);color:var(--dmc-muted2)">Nenhum pagamento registrado</div>')
+                        return
+                    for p in pags:
+                        pid = p['id']
+                        with ui.element('div').style(
+                            'display:flex;align-items:center;gap:10px;'
+                            'padding:10px 14px;background:rgba(255,255,255,.03);'
+                            'border:1px solid var(--dmc-b1);border-radius:10px;'
+                        ):
+                            ui.html('<span class="material-icons" style="font-size:16px;color:#4ADE80;flex-shrink:0">check_circle</span>')
+                            with ui.element('div').style('flex:1;min-width:0'):
+                                ui.html(f'<div style="font:600 13px var(--dmc-mono);color:#4ADE80">{_fmt(p["valor"])}</div>')
+                                if p.get('observacao'):
+                                    ui.html(f'<div style="font:11px var(--dmc-fm);color:var(--dmc-muted2)">{p["observacao"]}</div>')
+                            ui.html(f'<span style="font:11px var(--dmc-mono);color:var(--dmc-muted2);flex-shrink:0">{p.get("data","—")}</span>')
+                            del_btn = ui.element('button').style(
+                                'width:26px;height:26px;border-radius:5px;cursor:pointer;'
+                                'background:transparent;border:1px solid rgba(248,113,113,.2);'
+                                'display:inline-flex;align-items:center;justify-content:center;color:#F87171'
+                            )
+                            with del_btn:
+                                ui.html('<span class="material-icons" style="font-size:13px">delete</span>')
+                            def _del(pid_=pid):
+                                delete_pagamento(pid_)
+                                updated = [p for p in pags if p['id'] != pid_]
+                                pags.clear()
+                                pags.extend(updated)
+                                _draw_pags()
+                                if on_save:
+                                    on_save()
+                            del_btn.on('click', _del)
+
+            _draw_pags()
+
+            # Formulário de novo pagamento (só em modo pagar e se não quitado)
+            if modo == 'pagar' and st != 'quitado':
+                ui.html(
+                    '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                    'letter-spacing:.12em;text-transform:uppercase;border-top:1px solid var(--dmc-b1);'
+                    'padding-top:14px">Novo Pagamento</div>'
+                )
+                _pv_id  = f'pv-val-{id(dlg)}'
+                _pd_id  = f'pv-dat-{id(dlg)}'
+                _po_id  = f'pv-obs-{id(dlg)}'
+                sugestao = round(restante / max(1, parc - len(pags)), 2) if restante > 0 else restante
+
+                with ui.element('div').style('display:grid;grid-template-columns:1fr 1fr;gap:14px'):
+                    with ui.element('div'):
+                        ui.html('<label class="dmc-label">Valor (R$) *</label>')
+                        ui.html(f'<input id="{_pv_id}" class="dmc-input" type="number" step="0.01" min="0.01" max="{round(restante,2)}" value="{sugestao if sugestao > 0 else ""}" placeholder="0,00">')
+                    with ui.element('div'):
+                        ui.html('<label class="dmc-label">Data</label>')
+                        ui.html(f'<input id="{_pd_id}" class="dmc-input" type="date">')
+                ui.html('<label class="dmc-label">Observação</label>')
+                ui.html(f'<input id="{_po_id}" class="dmc-input" placeholder="Opcional">')
+
+                async def _reg_pag():
+                    vals = await ui.run_javascript(
+                        f'({{ val:(document.getElementById("{_pv_id}")||{{}}).value||"",'
+                        f'dat:(document.getElementById("{_pd_id}")||{{}}).value||"",'
+                        f'obs:(document.getElementById("{_po_id}")||{{}}).value||""}})'
+                    )
+                    try:
+                        v = float(str(vals.get('val','0')).replace(',','.'))
+                    except Exception:
+                        v = 0.0
+                    if v <= 0:
+                        ui.notify('Informe um valor válido', color='negative')
+                        return
+                    novo_pag = add_pagamento(conta['id'], v, vals.get('dat',''), vals.get('obs',''))
+                    pags.append(novo_pag)
+                    # Atualiza estado local
+                    nonlocal vp, restante, st
+                    vp       = round(vp + v, 2)
+                    restante = round(vt - vp, 2)
+                    st       = 'quitado' if vp >= vt else 'parcial'
+                    _draw_pags()
+                    ui.notify('Pagamento registrado', color='positive')
+                    if on_save:
+                        on_save()
+                    if restante <= 0:
+                        dlg.close()
+
+                with ui.element('div').style('display:flex;justify-content:flex-end'):
+                    ui.button('Registrar Pagamento', icon='payments', on_click=_reg_pag).props(
+                        'unelevated no-caps'
+                    ).classes('dmc-btn dmc-btn-primary')
+
+        with ui.element('div').style(
+            'padding:14px 24px;border-top:1px solid var(--dmc-b1);'
+            'display:flex;justify-content:flex-end;flex-shrink:0'
+        ):
+            ui.button('Fechar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
 
     dlg.open()

@@ -1,12 +1,20 @@
-"""Página Financeiro / NFS-e — /financeiro"""
+"""Página Financeiro — /financeiro  (NFS-e · A Pagar · A Receber)"""
 
+import base64
+from datetime import datetime
 from pathlib import Path
-from nicegui import ui
 
-from services.auth import current_user_label, current_user_perfil, is_authenticated, logout_user, mark_active, current_user_name
-from nicegui import app as _fapp
+from nicegui import app as _fapp, ui
+
+from services.auth import (
+    current_user_label, current_user_name, current_user_perfil,
+    is_authenticated, logout_user, mark_active,
+)
 from services.acesso import has_access
 from services.nfse import list_nfse, load_config, _DEPS_OK
+from services.financeiro import (
+    load_contas_pagar, load_contas_receber, resumo_pagar, resumo_receber,
+)
 from ui.styles import BOOTSTRAP_CDN, CSS, UTILS_JS
 
 _PAGE_CSS = """
@@ -49,6 +57,26 @@ html, body, .nicegui-content,
   font: 700 10px var(--dmc-mono); padding: 3px 10px; border-radius: 5px;
   letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
 }
+
+/* ── Tabs ── */
+.fi-tabs {
+  display: flex; gap: 0;
+  background: var(--dmc-bg2);
+  border-bottom: 1px solid var(--dmc-b1);
+  padding: 0 28px; flex-shrink: 0;
+}
+.fi-tab {
+  padding: 12px 20px;
+  font: 600 12px var(--dmc-mono); letter-spacing:.04em;
+  color: var(--dmc-muted2); cursor: pointer;
+  border-bottom: 2.5px solid transparent;
+  display: flex; align-items: center; gap: 7px;
+  transition: color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.fi-tab:hover { color: var(--dmc-text); }
+.fi-tab.active { color: var(--dmc-text); border-bottom-color: var(--fi-tab-color, #4ADE80); }
+
 .fi-actions {
   width: 100%; box-sizing: border-box;
   background: var(--dmc-bg2);
@@ -84,7 +112,7 @@ html, body, .nicegui-content,
   border-radius: 14px; overflow-x: auto;
 }
 .fi-table {
-  border-collapse: collapse; width: 100%; min-width: 760px;
+  border-collapse: collapse; width: 100%; min-width: 700px;
 }
 .fi-table thead tr { border-bottom: 1px solid var(--dmc-b1); }
 .fi-table thead th {
@@ -107,6 +135,8 @@ html, body, .nicegui-content,
   max-width: 220px; display: block;
 }
 .fi-val   { font: 600 13px var(--dmc-mono); color: #FBBF24; }
+.fi-val-r { font: 600 13px var(--dmc-mono); color: #4ADE80; }
+.fi-val-p { font: 600 13px var(--dmc-mono); color: #F87171; }
 .fi-ts    { font: 11px var(--dmc-mono); color: var(--dmc-muted); white-space: nowrap; }
 .fi-empty {
   display: flex; flex-direction: column;
@@ -120,9 +150,10 @@ html, body, .nicegui-content,
   color: var(--dmc-muted2); transition: all .15s; flex-shrink: 0;
 }
 .fi-act-btn:hover { background: rgba(255,255,255,.06); color: var(--dmc-text); }
-.fi-status-ok  { color: #4ADE80; font: 600 10px var(--dmc-mono); }
-.fi-status-err { color: #F87171; font: 600 10px var(--dmc-mono); }
-.fi-status-hom { color: #FBBF24; font: 600 10px var(--dmc-mono); }
+.fi-badge {
+  font: 700 9px var(--dmc-mono); padding: 2px 8px;
+  border-radius: 4px; letter-spacing: .06em; white-space: nowrap;
+}
 .fi-inline-stat {
   display: flex; align-items: center; gap: 6px;
   background: rgba(255,255,255,.04); border: 1px solid var(--dmc-b1);
@@ -133,12 +164,40 @@ html, body, .nicegui-content,
   text-transform: uppercase; letter-spacing: .06em;
 }
 .fi-inline-stat .val { font: 600 13px var(--dmc-mono); }
+.fi-progress {
+  height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,.06);
+  overflow: hidden; margin-top: 4px; min-width: 80px;
+}
+.fi-progress-bar { height: 100%; border-radius: 2px; transition: width .3s; }
 @media (max-width: 860px) {
-  .fi-topbar, .fi-actions, .fi-body { padding-left: 14px; padding-right: 14px; }
+  .fi-topbar, .fi-tabs, .fi-actions, .fi-body { padding-left: 14px; padding-right: 14px; }
   .hide-sm { display: none !important; }
+  .fi-tab { padding: 10px 12px; }
 }
 </style>
 """
+
+# ── Status helpers ─────────────────────────────────────────────────────────
+
+_STATUS_PAGAR = {
+    "pendente":  ("#FBBF24", "rgba(251,191,36,.1)"),
+    "pago":      ("#4ADE80", "rgba(74,222,128,.1)"),
+    "cancelado": ("#8BAA8B", "rgba(139,170,139,.08)"),
+}
+_STATUS_RECEBER = {
+    "aberto":    ("#60A5FA", "rgba(96,165,250,.1)"),
+    "parcial":   ("#FBBF24", "rgba(251,191,36,.1)"),
+    "quitado":   ("#4ADE80", "rgba(74,222,128,.1)"),
+    "cancelado": ("#8BAA8B", "rgba(139,170,139,.08)"),
+}
+
+def _fmt_brl(v: float) -> str:
+    return f'R$ {v:,.2f}'.replace(',','X').replace('.', ',').replace('X','.')
+
+def _badge(label: str, color: str, bg: str) -> str:
+    return (f'<span class="fi-badge" style="background:{bg};'
+            f'color:{color};border:1px solid {color}44">{label.upper()}</span>')
 
 
 @ui.page("/financeiro")
@@ -168,47 +227,57 @@ def financeiro_page():
     _auto_logout_btn.on("click", _logout)
     ui.timer(60, lambda: mark_active(_fi_email, _fi_nome, _fi_perfil))
 
-    from ui.financeiro_dialogs import emitir_nfse_dialog, config_nfse_dialog, ver_nfse_dialog, relatorio_financeiro_dialog, empresa_dialog, certificado_dialog
+    from ui.financeiro_dialogs import (
+        emitir_nfse_dialog, config_nfse_dialog, ver_nfse_dialog,
+        relatorio_financeiro_dialog, empresa_dialog, certificado_dialog,
+        nova_conta_pagar_dialog, nova_conta_receber_dialog,
+        registrar_pagamento_dialog, categorias_pagar_dialog,
+    )
 
     cfg = load_config()
+    _cfg_ref: dict = {"cfg": cfg}
+    _tab_ref: dict = {"tab": "nfse"}
 
     with ui.element("div").classes("fi-page"):
 
-        # ── Topbar ────────────────────────────────────────────────────
+        # ── Topbar ─────────────────────────────────────────────────────
         with ui.element("div").classes("fi-topbar"):
             ui.html(
                 '<div class="fi-title">'
-                '<span class="material-icons ico">receipt_long</span>'
-                'Financeiro / NFS-e'
+                '<span class="material-icons ico">account_balance_wallet</span>'
+                'Financeiro'
                 '</div>'
             )
             ui.html('<div class="fi-sep"></div>')
 
-            env = cfg.get('ambiente', 'homologacao')
-            env_color = '#FBBF24' if env == 'homologacao' else '#4ADE80'
-            env_label = 'HOMOLOGAÇÃO' if env == 'homologacao' else 'PRODUÇÃO'
-            stat_label = ui.html('<div class="fi-stat">—</div>')
+            env       = cfg.get("ambiente", "homologacao")
+            env_color = "#FBBF24" if env == "homologacao" else "#4ADE80"
+            env_label = "HOMOLOGAÇÃO" if env == "homologacao" else "PRODUÇÃO"
+
+            stat_nfse = ui.html('<div class="fi-stat">—</div>')
+
             ui.html(
                 f'<span class="fi-env-badge" '
                 f'style="background:{env_color}18;border:1px solid {env_color}44;'
                 f'color:{env_color}">{env_label}</span>'
             )
             ui.html('<div class="fi-spacer"></div>')
+
             ui.button(
                 "Empresa", icon="business",
-                on_click=lambda: empresa_dialog(on_save=_refresh),
+                on_click=lambda: empresa_dialog(on_save=_refresh_cfg),
             ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary").style(
                 "color:#60A5FA;border-color:rgba(96,165,250,.3)"
             )
 
-            _cert_ok = bool(cfg.get('cert_path') and Path(cfg.get('cert_path', '')).exists())
-            _cert_dot_color = '#4ADE80' if _cert_ok else '#FBBF24'
-            with ui.element('div').style('position:relative;flex-shrink:0'):
+            _cert_ok = bool(cfg.get("cert_path") and Path(cfg.get("cert_path","")).exists())
+            _cert_dot_color = "#4ADE80" if _cert_ok else "#FBBF24"
+            with ui.element("div").style("position:relative;flex-shrink:0"):
                 ui.button(
-                    'Certificado', icon='verified_user',
+                    "Certificado", icon="verified_user",
                     on_click=lambda: certificado_dialog(on_save=_refresh_cfg),
-                ).props('unelevated no-caps').classes('dmc-btn dmc-btn-secondary').style(
-                    'color:#A78BFA;border-color:rgba(167,139,250,.3)'
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary").style(
+                    "color:#A78BFA;border-color:rgba(167,139,250,.3)"
                 )
                 _cert_dot = ui.html(
                     f'<div style="position:absolute;top:5px;right:5px;'
@@ -220,52 +289,55 @@ def financeiro_page():
                 "flat round dense"
             ).style("color:var(--dmc-muted)")
 
-        # ── Barra de ações ─────────────────────────────────────────────
-        with ui.element("div").classes("fi-actions"):
-            ui.button(
-                "Emitir NFS-e", icon="add_circle",
-                on_click=lambda: emitir_nfse_dialog(on_success=_refresh),
-            ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary")
-
-            ui.button(
-                "Configurar", icon="settings",
-                on_click=lambda: config_nfse_dialog(on_save=_refresh_cfg),
-            ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
-
-            ui.button(
-                "Relatório", icon="bar_chart",
-                on_click=lambda: relatorio_financeiro_dialog(),
-            ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
-
-            ui.button(
-                "Atualizar", icon="refresh",
-                on_click=lambda: _refresh(),
-            ).props("flat round dense").style("color:var(--dmc-muted);margin-left:4px")
-
-            ui.html('<div class="fi-spacer"></div>')
-            stats_box = ui.element("div").style("display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap")
-
-            if not _DEPS_OK:
-                ui.html(
-                    '<span style="font:11px var(--dmc-mono);color:#F87171;'
-                    'background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);'
-                    'border-radius:6px;padding:4px 10px">'
-                    '⚠ Dependências ausentes: pip install lxml cryptography httpx</span>'
+        # ── Abas ───────────────────────────────────────────────────────
+        with ui.element("div").classes("fi-tabs"):
+            _TABS = [
+                ("nfse",    "receipt_long",     "#4ADE80", "NFS-e"),
+                ("pagar",   "arrow_circle_down","#F87171", "Contas a Pagar"),
+                ("receber", "arrow_circle_up",  "#4ADE80", "Contas a Receber"),
+            ]
+            tab_btns: dict = {}
+            for tid, ticon, tcolor, tlabel in _TABS:
+                is_active = tid == "nfse"
+                btn = ui.element("div").classes("fi-tab" + (" active" if is_active else "")).style(
+                    f"--fi-tab-color:{tcolor}"
                 )
+                with btn:
+                    ui.html(
+                        f'<span class="material-icons" style="font-size:16px;color:{tcolor}">'
+                        f'{ticon}</span>'
+                        f'<span>{tlabel}</span>'
+                    )
+                tab_btns[tid] = btn
+                btn.on("click", lambda t=tid: _switch_tab(t))
 
-        # ── Corpo ──────────────────────────────────────────────────────
+        # ── Barra de ações ──────────────────────────────────────────────
+        actions_box = ui.element("div").classes("fi-actions")
+        stats_box   = ui.element("div").style(
+            "display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap"
+        )
+
+        # ── Corpo ───────────────────────────────────────────────────────
         with ui.element("div").classes("fi-body"):
             content_box = ui.element("div")
 
-        # ── Render ────────────────────────────────────────────────────
-        _cfg_ref: dict = {'cfg': cfg}
+        # ── Lógica de abas ──────────────────────────────────────────────
 
-        def _refresh_cfg():
+        def _switch_tab(tab: str) -> None:
+            _tab_ref["tab"] = tab
+            for tid, btn in tab_btns.items():
+                if tid == tab:
+                    btn.classes(add="active")
+                else:
+                    btn.classes(remove="active")
+            _refresh()
+
+        def _refresh_cfg() -> None:
             nonlocal cfg
             cfg = load_config()
-            _cfg_ref['cfg'] = cfg
-            c_ok = bool(cfg.get('cert_path') and Path(cfg.get('cert_path', '')).exists())
-            c_color = '#4ADE80' if c_ok else '#FBBF24'
+            _cfg_ref["cfg"] = cfg
+            c_ok    = bool(cfg.get("cert_path") and Path(cfg.get("cert_path","")).exists())
+            c_color = "#4ADE80" if c_ok else "#FBBF24"
             _cert_dot.set_content(
                 f'<div style="position:absolute;top:5px;right:5px;'
                 f'width:7px;height:7px;border-radius:50%;pointer-events:none;'
@@ -273,24 +345,68 @@ def financeiro_page():
             )
             _refresh()
 
-        def _refresh():
-            entries = list_nfse()
-            n = len(entries)
-            total = sum(e.get('valor', 0) for e in entries)
-            mes_atual = datetime.now().strftime('%Y-%m')
-            mes_n = sum(1 for e in entries if (e.get('emitido_em', '') or '')[:7] == mes_atual)
-
-            stat_label.set_content(
-                f'<div class="fi-stat">{n} nota{"s" if n != 1 else ""}</div>'
-            )
-
-            total_fmt = f'R$ {total:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+        def _refresh() -> None:
+            tab = _tab_ref["tab"]
+            actions_box.clear()
             stats_box.clear()
+            content_box.clear()
+
+            if tab == "nfse":
+                _render_nfse()
+            elif tab == "pagar":
+                _render_pagar()
+            elif tab == "receber":
+                _render_receber()
+
+        # ── Tab NFS-e ────────────────────────────────────────────────────
+
+        def _render_nfse() -> None:
+            with actions_box:
+                ui.button(
+                    "Emitir NFS-e", icon="add_circle",
+                    on_click=lambda: emitir_nfse_dialog(on_success=_refresh),
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary")
+
+                ui.button(
+                    "Configurar", icon="settings",
+                    on_click=lambda: config_nfse_dialog(on_save=_refresh_cfg),
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
+
+                ui.button(
+                    "Relatório", icon="bar_chart",
+                    on_click=lambda: relatorio_financeiro_dialog(),
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
+
+                ui.button(
+                    "Atualizar", icon="refresh", on_click=_refresh,
+                ).props("flat round dense").style("color:var(--dmc-muted);margin-left:4px")
+
+                ui.html('<div style="flex:1"></div>')
+                _build_nfse_stats()
+
+                if not _DEPS_OK:
+                    ui.html(
+                        '<span style="font:11px var(--dmc-mono);color:#F87171;'
+                        'background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);'
+                        'border-radius:6px;padding:4px 10px">'
+                        '⚠ pip install lxml cryptography httpx</span>'
+                    )
+
+            _build_nfse_table()
+
+        def _build_nfse_stats() -> None:
+            entries   = list_nfse()
+            n         = len(entries)
+            total     = sum(e.get("valor",0) for e in entries)
+            mes_atual = datetime.now().strftime("%Y-%m")
+            mes_n     = sum(1 for e in entries if (e.get("emitido_em","") or "")[:7] == mes_atual)
+            total_fmt = _fmt_brl(total)
+            stat_nfse.set_content(f'<div class="fi-stat">{n} nota{"s" if n!=1 else ""}</div>')
             with stats_box:
                 for lbl, val, col in [
-                    ('Total', total_fmt, '#4ADE80'),
-                    ('Mês',   f'{mes_n} nota{"s" if mes_n != 1 else ""}', '#60A5FA'),
-                    (env_label, cfg.get('cnpj') or '—', env_color),
+                    ("Total", total_fmt, "#4ADE80"),
+                    ("Mês",   f'{mes_n} nota{"s" if mes_n!=1 else ""}', "#60A5FA"),
+                    (env_label, cfg.get("cnpj") or "—", env_color),
                 ]:
                     ui.html(
                         f'<div class="fi-inline-stat">'
@@ -299,7 +415,8 @@ def financeiro_page():
                         f'</div>'
                     )
 
-            content_box.clear()
+        def _build_nfse_table() -> None:
+            entries = list_nfse()
             with content_box:
                 if not entries:
                     with ui.element("div").classes("fi-empty"):
@@ -308,25 +425,23 @@ def financeiro_page():
                         ui.html('<span style="font:12px var(--dmc-fm);color:var(--dmc-muted2)">Clique em "Emitir NFS-e" para começar.</span>')
                     return
 
-                rows_html = ''
+                rows_html = ""
                 for e in entries:
-                    sucesso  = e.get('sucesso', False)
-                    amb      = e.get('ambiente', 'homologacao')
-                    num      = e.get('numero', '—')
-                    toma     = e.get('tomador', '—')
-                    desc     = e.get('descricao', '—')
-                    valor    = e.get('valor', 0)
-                    emitido  = (e.get('emitido_em', '') or '')[:16].replace('T', ' ')
-                    chave    = e.get('chave_acesso', '') or e.get('id', '')
+                    sucesso = e.get("sucesso", False)
+                    amb     = e.get("ambiente", "homologacao")
+                    num     = e.get("numero", "—")
+                    toma    = e.get("tomador", "—")
+                    desc    = e.get("descricao", "—")
+                    valor   = e.get("valor", 0)
+                    emitido = (e.get("emitido_em","") or "")[:16].replace("T"," ")
+                    chave   = e.get("chave_acesso","") or e.get("id","")
 
                     if not sucesso:
-                        status_html = '<span class="fi-status-err">ERRO</span>'
-                    elif amb == 'homologacao':
-                        status_html = '<span class="fi-status-hom">HOMO</span>'
+                        st_html = '<span style="color:#F87171;font:600 10px var(--dmc-mono)">ERRO</span>'
+                    elif amb == "homologacao":
+                        st_html = '<span style="color:#FBBF24;font:600 10px var(--dmc-mono)">HOMO</span>'
                     else:
-                        status_html = '<span class="fi-status-ok">EMITIDA</span>'
-
-                    valor_fmt = f'R$ {valor:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+                        st_html = '<span style="color:#4ADE80;font:600 10px var(--dmc-mono)">EMITIDA</span>'
 
                     rows_html += (
                         f'<tr data-nfse-key="{chave}">'
@@ -335,65 +450,282 @@ def financeiro_page():
                         f'<span class="fi-toma">{toma}</span>'
                         f'<span class="fi-desc" title="{desc}">{desc}</span>'
                         f'</div></td>'
-                        f'<td><span class="fi-val">{valor_fmt}</span></td>'
-                        f'<td>{status_html}</td>'
+                        f'<td><span class="fi-val">{_fmt_brl(valor)}</span></td>'
+                        f'<td>{st_html}</td>'
                         f'<td><span class="fi-ts">{emitido}</span></td>'
-                        f'<td>'
-                        f'<div style="display:flex;gap:4px">'
-                        f'<button class="fi-act-btn" title="Ver detalhes" '
+                        f'<td><div style="display:flex;gap:4px">'
+                        f'<button class="fi-act-btn" title="Ver" '
                         f'onclick="emitEvent(\'fi_ver\',{{key:\"{chave}\"}})">'
-                        f'<span class="material-icons" style="font-size:15px">visibility</span>'
-                        f'</button>'
-                        f'{"" if not e.get("nfse_xml") else f"""<button class="fi-act-btn" title="Download XML" onclick="emitEvent(\'fi_dl_xml\',{{key:\"{chave}\"}})"><span class="material-icons" style="font-size:15px">download</span></button>"""}'
-                        f'</div>'
-                        f'</td>'
-                        f'</tr>'
+                        f'<span class="material-icons" style="font-size:15px">visibility</span></button>'
+                        f'{"" if not e.get("nfse_xml") else f"""<button class="fi-act-btn" title="XML" onclick="emitEvent(\'fi_dl_xml\',{{key:\"{chave}\"}})"><span class="material-icons" style="font-size:15px">download</span></button>"""}'
+                        f'</div></td></tr>'
                     )
 
                 with ui.element("div").classes("fi-card"):
                     ui.html(
-                        '<table class="fi-table">'
-                        '<thead><tr>'
+                        '<table class="fi-table"><thead><tr>'
                         '<th style="width:70px">Nº</th>'
                         '<th>Tomador / Descrição</th>'
                         '<th style="width:130px">Valor</th>'
                         '<th style="width:80px">Status</th>'
                         '<th style="width:140px">Emitido em</th>'
                         '<th style="width:80px">Ações</th>'
-                        '</tr></thead>'
-                        f'<tbody>{rows_html}</tbody>'
-                        '</table>'
+                        f'</tr></thead><tbody>{rows_html}</tbody></table>'
                     )
 
-            # Eventos JS → Python
-            def _on_ver(e):
-                key = e.args.get('key', '')
-                for entry in list_nfse():
-                    k = entry.get('chave_acesso') or entry.get('id', '')
-                    if k == key:
-                        ver_nfse_dialog(entry)
-                        break
+                def _on_ver(e):
+                    key = e.args.get("key","")
+                    for entry in list_nfse():
+                        k = entry.get("chave_acesso") or entry.get("id","")
+                        if k == key:
+                            ver_nfse_dialog(entry)
+                            break
 
-            def _on_dl_xml(e):
-                key = e.args.get('key', '')
-                for entry in list_nfse():
-                    k = entry.get('chave_acesso') or entry.get('id', '')
-                    if k == key and entry.get('nfse_xml'):
-                        xml_b64 = base64.b64encode(entry['nfse_xml'].encode()).decode()
-                        fname   = f'NFSe_{entry.get("numero", key)}.xml'
-                        ui.run_javascript(f'''
-                            const a = document.createElement('a');
-                            a.href = 'data:application/xml;base64,{xml_b64}';
-                            a.download = '{fname}';
-                            document.body.appendChild(a); a.click();
-                            document.body.removeChild(a);
-                        ''')
-                        break
+                def _on_dl_xml(e):
+                    key = e.args.get("key","")
+                    for entry in list_nfse():
+                        k = entry.get("chave_acesso") or entry.get("id","")
+                        if k == key and entry.get("nfse_xml"):
+                            xml_b64 = base64.b64encode(entry["nfse_xml"].encode()).decode()
+                            fname   = f'NFSe_{entry.get("numero", key)}.xml'
+                            ui.run_javascript(f'''
+                                const a = document.createElement('a');
+                                a.href = 'data:application/xml;base64,{xml_b64}';
+                                a.download = '{fname}';
+                                document.body.appendChild(a); a.click();
+                                document.body.removeChild(a);
+                            ''')
+                            break
 
-            ui.on('fi_ver',    _on_ver)
-            ui.on('fi_dl_xml', _on_dl_xml)
+                ui.on("fi_ver",    _on_ver)
+                ui.on("fi_dl_xml", _on_dl_xml)
 
-        from datetime import datetime
-        import base64
+        # ── Tab Contas a Pagar ────────────────────────────────────────────
+
+        def _render_pagar() -> None:
+            contas = load_contas_pagar()
+            res    = resumo_pagar()
+
+            with actions_box:
+                ui.button(
+                    "Nova Conta", icon="add_circle",
+                    on_click=lambda: nova_conta_pagar_dialog(on_save=_refresh),
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary").style(
+                    "background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.35);color:#F87171"
+                )
+                ui.button(
+                    "Categorias", icon="label",
+                    on_click=lambda: categorias_pagar_dialog(on_save=_refresh),
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
+                ui.button(
+                    "Relatório", icon="bar_chart",
+                    on_click=lambda: relatorio_financeiro_dialog(),
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
+                ui.button(
+                    icon="refresh", on_click=_refresh,
+                ).props("flat round dense").style("color:var(--dmc-muted);margin-left:4px")
+                ui.html('<div style="flex:1"></div>')
+                with stats_box:
+                    for lbl, val, col in [
+                        ("Pendente", _fmt_brl(res["pendente"]), "#FBBF24"),
+                        ("Pago",     _fmt_brl(res["pago"]),     "#4ADE80"),
+                        ("Total",    _fmt_brl(res["total"]),    "#DCE8DC"),
+                    ]:
+                        ui.html(
+                            f'<div class="fi-inline-stat">'
+                            f'<span class="lbl">{lbl}</span>'
+                            f'<span class="val" style="color:{col}">{val}</span>'
+                            f'</div>'
+                        )
+
+            with content_box:
+                if not contas:
+                    with ui.element("div").classes("fi-empty"):
+                        ui.html('<span class="material-icons" style="font-size:52px;color:var(--dmc-b2)">arrow_circle_down</span>')
+                        ui.html('<span style="font:13px var(--dmc-fm)">Nenhuma conta a pagar cadastrada.</span>')
+                    return
+
+                rows_html = ""
+                for c in contas:
+                    st     = c.get("status","pendente")
+                    cor, bg = _STATUS_PAGAR.get(st, ("#8BAA8B","rgba(139,170,139,.08)"))
+                    badge  = _badge(st, cor, bg)
+                    cat    = c.get("categoria_nome") or "—"
+                    cat_cor = c.get("categoria_cor") or "#8BAA8B"
+                    obra   = c.get("obra_nome") or "—"
+                    venc   = c.get("data_venc") or "—"
+                    pag    = c.get("data_pag") or "—"
+                    cid    = c["id"]
+                    rows_html += (
+                        f'<tr>'
+                        f'<td><span class="fi-toma">{c.get("descricao","—")}</span></td>'
+                        f'<td><span style="font:11px var(--dmc-mono);'
+                        f'background:{cat_cor}14;color:{cat_cor};padding:2px 7px;'
+                        f'border-radius:4px;border:1px solid {cat_cor}30">{cat}</span></td>'
+                        f'<td><span class="fi-ts">{obra}</span></td>'
+                        f'<td><span class="fi-val-p">{_fmt_brl(c.get("valor",0))}</span></td>'
+                        f'<td><span class="fi-ts">{venc}</span></td>'
+                        f'<td><span class="fi-ts">{pag}</span></td>'
+                        f'<td>{badge}</td>'
+                        f'<td><div style="display:flex;gap:4px">'
+                        f'{"" if st == "pago" else f"""<button class="fi-act-btn" title="Marcar como pago" style="color:#4ADE80;border-color:rgba(74,222,128,.3)" onclick="emitEvent(\'fi_pagar\',{{id:\"{cid}\"}})" ><span class="material-icons" style="font-size:14px">check_circle</span></button>"""}'
+                        f'<button class="fi-act-btn" title="Editar" onclick="emitEvent(\'fi_edit_pagar\',{{id:\"{cid}\"}})">'
+                        f'<span class="material-icons" style="font-size:14px">edit</span></button>'
+                        f'<button class="fi-act-btn" title="Excluir" style="color:#F87171;border-color:rgba(248,113,113,.2)" onclick="emitEvent(\'fi_del_pagar\',{{id:\"{cid}\"}})">'
+                        f'<span class="material-icons" style="font-size:14px">delete</span></button>'
+                        f'</div></td></tr>'
+                    )
+
+                with ui.element("div").classes("fi-card"):
+                    ui.html(
+                        '<table class="fi-table"><thead><tr>'
+                        '<th>Descrição</th>'
+                        '<th style="width:120px">Categoria</th>'
+                        '<th style="width:140px">Obra</th>'
+                        '<th style="width:110px">Valor</th>'
+                        '<th style="width:90px">Vencimento</th>'
+                        '<th style="width:90px">Pagamento</th>'
+                        '<th style="width:90px">Status</th>'
+                        '<th style="width:100px">Ações</th>'
+                        f'</tr></thead><tbody>{rows_html}</tbody></table>'
+                    )
+
+                def _on_pagar(e):
+                    from services.financeiro import pagar_conta
+                    pagar_conta(e.args.get("id",""))
+                    _refresh()
+
+                def _on_del_pagar(e):
+                    from services.financeiro import delete_conta_pagar
+                    delete_conta_pagar(e.args.get("id",""))
+                    _refresh()
+
+                def _on_edit_pagar(e):
+                    cid = e.args.get("id","")
+                    conta = next((c for c in contas if c["id"] == cid), None)
+                    if conta:
+                        nova_conta_pagar_dialog(conta=conta, on_save=_refresh)
+
+                ui.on("fi_pagar",      _on_pagar)
+                ui.on("fi_del_pagar",  _on_del_pagar)
+                ui.on("fi_edit_pagar", _on_edit_pagar)
+
+        # ── Tab Contas a Receber ──────────────────────────────────────────
+
+        def _render_receber() -> None:
+            contas = load_contas_receber()
+            res    = resumo_receber()
+
+            with actions_box:
+                ui.button(
+                    "Nova Conta", icon="add_circle",
+                    on_click=lambda: nova_conta_receber_dialog(on_save=_refresh),
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary")
+                ui.button(
+                    "Relatório", icon="bar_chart",
+                    on_click=lambda: relatorio_financeiro_dialog(),
+                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
+                ui.button(
+                    icon="refresh", on_click=_refresh,
+                ).props("flat round dense").style("color:var(--dmc-muted);margin-left:4px")
+                ui.html('<div style="flex:1"></div>')
+                with stats_box:
+                    for lbl, val, col in [
+                        ("A Receber", _fmt_brl(res["a_receber"]), "#60A5FA"),
+                        ("Recebido",  _fmt_brl(res["recebido"]),  "#4ADE80"),
+                        ("Total",     _fmt_brl(res["total"]),     "#DCE8DC"),
+                    ]:
+                        ui.html(
+                            f'<div class="fi-inline-stat">'
+                            f'<span class="lbl">{lbl}</span>'
+                            f'<span class="val" style="color:{col}">{val}</span>'
+                            f'</div>'
+                        )
+
+            with content_box:
+                if not contas:
+                    with ui.element("div").classes("fi-empty"):
+                        ui.html('<span class="material-icons" style="font-size:52px;color:var(--dmc-b2)">arrow_circle_up</span>')
+                        ui.html('<span style="font:13px var(--dmc-fm)">Nenhuma conta a receber cadastrada.</span>')
+                    return
+
+                rows_html = ""
+                for c in contas:
+                    st      = c.get("status","aberto")
+                    cor, bg = _STATUS_RECEBER.get(st, ("#8BAA8B","rgba(139,170,139,.08)"))
+                    badge   = _badge(st, cor, bg)
+                    vt      = float(c.get("valor_total",0))
+                    vp      = float(c.get("valor_pago",0))
+                    pct     = int(min(100, (vp/vt*100))) if vt else 0
+                    parc    = c.get("parcelas",1)
+                    n_pags  = len(c.get("pagamentos",[]))
+                    obra    = c.get("obra_nome") or "—"
+                    venc    = c.get("data_venc") or "—"
+                    cid     = c["id"]
+
+                    progresso = (
+                        f'<div class="fi-progress">'
+                        f'<div class="fi-progress-bar" style="width:{pct}%;background:{cor}"></div>'
+                        f'</div>'
+                        f'<span style="font:10px var(--dmc-mono);color:var(--dmc-muted2)">'
+                        f'{_fmt_brl(vp)} / {_fmt_brl(vt)}</span>'
+                    )
+
+                    rows_html += (
+                        f'<tr>'
+                        f'<td><span class="fi-toma">{c.get("descricao","—")}</span></td>'
+                        f'<td><div style="display:flex;flex-direction:column;gap:2px">'
+                        f'<span class="fi-toma">{c.get("cliente_nome","—")}</span>'
+                        f'</div></td>'
+                        f'<td><span class="fi-ts">{obra}</span></td>'
+                        f'<td><div style="display:flex;flex-direction:column;gap:3px">{progresso}</div></td>'
+                        f'<td><span style="font:11px var(--dmc-mono);color:var(--dmc-muted)">'
+                        f'{n_pags}/{parc} parcela{"s" if parc!=1 else ""}</span></td>'
+                        f'<td><span class="fi-ts">{venc}</span></td>'
+                        f'<td>{badge}</td>'
+                        f'<td><div style="display:flex;gap:4px">'
+                        f'<button class="fi-act-btn" title="Registrar pagamento" style="color:#4ADE80;border-color:rgba(74,222,128,.3)" onclick="emitEvent(\'fi_pag_receber\',{{id:\"{cid}\"}})">'
+                        f'<span class="material-icons" style="font-size:14px">payments</span></button>'
+                        f'<button class="fi-act-btn" title="Ver parcelas" onclick="emitEvent(\'fi_ver_receber\',{{id:\"{cid}\"}})">'
+                        f'<span class="material-icons" style="font-size:14px">list</span></button>'
+                        f'<button class="fi-act-btn" title="Excluir" style="color:#F87171;border-color:rgba(248,113,113,.2)" onclick="emitEvent(\'fi_del_receber\',{{id:\"{cid}\"}})">'
+                        f'<span class="material-icons" style="font-size:14px">delete</span></button>'
+                        f'</div></td></tr>'
+                    )
+
+                with ui.element("div").classes("fi-card"):
+                    ui.html(
+                        '<table class="fi-table"><thead><tr>'
+                        '<th>Descrição</th>'
+                        '<th style="width:140px">Cliente</th>'
+                        '<th style="width:140px">Obra</th>'
+                        '<th style="width:160px">Progresso</th>'
+                        '<th style="width:100px">Parcelas</th>'
+                        '<th style="width:90px">Vencimento</th>'
+                        '<th style="width:90px">Status</th>'
+                        '<th style="width:110px">Ações</th>'
+                        f'</tr></thead><tbody>{rows_html}</tbody></table>'
+                    )
+
+                def _on_pag_receber(e):
+                    cid   = e.args.get("id","")
+                    conta = next((c for c in contas if c["id"] == cid), None)
+                    if conta:
+                        registrar_pagamento_dialog(conta=conta, on_save=_refresh)
+
+                def _on_ver_receber(e):
+                    cid   = e.args.get("id","")
+                    conta = next((c for c in contas if c["id"] == cid), None)
+                    if conta:
+                        registrar_pagamento_dialog(conta=conta, on_save=_refresh, modo="ver")
+
+                def _on_del_receber(e):
+                    from services.financeiro import delete_conta_receber
+                    delete_conta_receber(e.args.get("id",""))
+                    _refresh()
+
+                ui.on("fi_pag_receber", _on_pag_receber)
+                ui.on("fi_ver_receber", _on_ver_receber)
+                ui.on("fi_del_receber", _on_del_receber)
 
         _refresh()

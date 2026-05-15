@@ -118,6 +118,49 @@ CREATE TABLE IF NOT EXISTS audit_log (
     caminho   TEXT DEFAULT '',
     detalhe   TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS categorias_pagar (
+    id   TEXT PRIMARY KEY,
+    nome TEXT NOT NULL UNIQUE,
+    cor  TEXT DEFAULT '#8BAA8B'
+);
+
+CREATE TABLE IF NOT EXISTS contas_pagar (
+    id           TEXT PRIMARY KEY,
+    descricao    TEXT DEFAULT '',
+    categoria_id TEXT DEFAULT '',
+    obra_id      TEXT DEFAULT '',
+    obra_nome    TEXT DEFAULT '',
+    valor        REAL DEFAULT 0,
+    data_venc    TEXT DEFAULT '',
+    data_pag     TEXT DEFAULT '',
+    status       TEXT DEFAULT 'pendente',
+    observacao   TEXT DEFAULT '',
+    data_criacao TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS contas_receber (
+    id           TEXT PRIMARY KEY,
+    descricao    TEXT DEFAULT '',
+    cliente_nome TEXT DEFAULT '',
+    cliente_cpf  TEXT DEFAULT '',
+    obra_id      TEXT DEFAULT '',
+    obra_nome    TEXT DEFAULT '',
+    valor_total  REAL DEFAULT 0,
+    valor_pago   REAL DEFAULT 0,
+    parcelas     INTEGER DEFAULT 1,
+    status       TEXT DEFAULT 'aberto',
+    data_venc    TEXT DEFAULT '',
+    data_criacao TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS pagamentos_receber (
+    id               TEXT PRIMARY KEY,
+    conta_receber_id TEXT NOT NULL,
+    valor            REAL DEFAULT 0,
+    data             TEXT DEFAULT '',
+    observacao       TEXT DEFAULT ''
+);
 """
 
 
