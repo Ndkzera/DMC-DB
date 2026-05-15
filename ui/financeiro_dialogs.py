@@ -1928,7 +1928,8 @@ def categorias_pagar_dialog(on_save=None) -> None:
 def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
     """Cadastro / edição de conta a pagar."""
     from services.financeiro import (
-        load_categorias_pagar, add_conta_pagar, update_conta_pagar,
+        load_categorias_pagar, add_categoria_pagar,
+        add_conta_pagar, update_conta_pagar,
     )
     from services.obras import load_obras
 
@@ -1989,12 +1990,38 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
 
             ui.html('<label class="dmc-label">Categoria</label>')
             _iids['categoria_id'] = _inp_id('cat')
+            _new_cat_box_id = _inp_id('newcatbox')
+            _new_cat_nome_id = _inp_id('newcatnome')
+            _new_cat_cor_id  = _inp_id('newcatcor')
             cat_cur = _st.get('categoria_id','')
+            # opção especial __new__ no final
             cat_opts_html = ''.join(
                 f'<option value="{k}"{"  selected" if k==cat_cur else ""}>{v}</option>'
                 for k, v in cat_opts
+            ) + '<option value="__new__" style="color:#FBBF24">+ Nova categoria…</option>'
+            ui.html(
+                f'<select id="{_iids["categoria_id"]}" class="dmc-input" style="cursor:pointer" '
+                f'onchange="(function(s){{var box=document.getElementById(\'{_new_cat_box_id}\');'
+                f'if(box)box.style.display=s.value===\'__new__\'?\'flex\':\'none\';}})(this)">'
+                f'{cat_opts_html}</select>'
             )
-            ui.html(f'<select id="{_iids["categoria_id"]}" class="dmc-input" style="cursor:pointer">{cat_opts_html}</select>')
+            # caixa inline para criar categoria nova (oculta por padrão)
+            _cor_opts = ''.join(
+                f'<option value="{c}">{c}</option>'
+                for c in _CAT_COLORS
+            )
+            ui.html(
+                f'<div id="{_new_cat_box_id}" style="display:none;align-items:center;gap:8px;'
+                f'margin-top:6px;padding:10px 12px;background:rgba(251,191,36,.05);'
+                f'border:1px solid rgba(251,191,36,.2);border-radius:10px">'
+                f'<span class="material-icons" style="font-size:15px;color:#FBBF24;flex-shrink:0">label</span>'
+                f'<input id="{_new_cat_nome_id}" class="dmc-input" placeholder="Nome da categoria" '
+                f'style="flex:1;margin-bottom:0">'
+                f'<select id="{_new_cat_cor_id}" class="dmc-input" '
+                f'style="width:90px;margin-bottom:0;cursor:pointer;font-size:11px">'
+                f'{_cor_opts}</select>'
+                f'</div>'
+            )
 
             ui.html('<label class="dmc-label">Obra vinculada</label>')
             _iids['obra_id'] = _inp_id('obra')
@@ -2056,6 +2083,19 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
                         obra_nome = ob.get('cliente_nome','') + (' · ' + ob.get('obra_log','') if ob.get('obra_log') else '')
 
                 cat_id = vals.get('categoria_id','')
+                # Criar categoria nova inline se __new__ foi selecionado
+                if cat_id == '__new__':
+                    new_nome = (await ui.run_javascript(
+                        f'(document.getElementById("{_new_cat_nome_id}")||{{}}).value||""'
+                    ) or '').strip()
+                    new_cor = (await ui.run_javascript(
+                        f'(document.getElementById("{_new_cat_cor_id}")||{{}}).value||""'
+                    ) or _CAT_COLORS[0])
+                    if new_nome:
+                        nova_cat = add_categoria_pagar(new_nome, new_cor)
+                        cat_id = nova_cat['id']
+                    else:
+                        cat_id = ''
 
                 if editando:
                     update_conta_pagar(
