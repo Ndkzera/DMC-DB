@@ -164,10 +164,28 @@ CREATE TABLE IF NOT EXISTS pagamentos_receber (
 """
 
 
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Acrescenta colunas novas a tabelas existentes (ALTER TABLE idempotente)."""
+    def _has_col(table: str, col: str) -> bool:
+        return any(
+            r[1] == col
+            for r in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        )
+    altered = False
+    for table in ("contas_pagar", "contas_receber"):
+        if not _has_col(table, "deletado_em"):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN deletado_em TEXT DEFAULT NULL")
+            altered = True
+    if altered:
+        conn.commit()
+
+
 def init_db() -> None:
     """Cria tabelas e migra dados dos JSONs existentes (executa uma vez)."""
     with get_conn() as conn:
         conn.executescript(_SCHEMA)
+    with get_conn() as conn:
+        _run_migrations(conn)
     _migrate_json()
 
 

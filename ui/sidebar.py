@@ -4,7 +4,7 @@ from nicegui import ui
 from ui.agenda_dialogs import conectar_agenda_dialog, novo_evento_dialog, ver_agenda_dialog
 from ui.obras_dialogs import nova_obra_dialog, ver_obras_dialog
 from ui.campo_dialogs import agenda_campo_dialog, historico_dialog
-from ui.processamento_dialogs import norte_magnetico_dialog, processamento_campo_dialog, processamento_campo_latlong_dialog, relatorio_campo_dialog, conversao_datum_dialog, kml_para_shapefile_dialog, gerador_kml_dialog
+from ui.processamento_dialogs import norte_magnetico_dialog, processamento_campo_dialog, processamento_campo_latlong_dialog, relatorio_campo_dialog, conversao_datum_dialog, kml_para_shapefile_dialog, gerador_kml_dialog, poligono_shapefile_dialog
 from ui.tecnicos_dialogs import cadastrar_tecnico_dialog, ver_tecnicos_dialog
 from ui.modelos_dialogs import modelos_dialog
 from services.agenda import is_connected
@@ -397,36 +397,43 @@ def render_sidebar(state, on_filter, on_buscar_cliente, on_cadastrar_cliente=Non
                             ui.html("<span>Gerador de KML</span>")
                         b6.on("click", gerador_kml_dialog)
 
+                        b7 = ui.element("button").classes("dmc-sidebar-item")
+                        with b7:
+                            ui.html('<span class="material-icons" style="font-size:15px;color:#A78BFA;flex-shrink:0">polyline</span>')
+                            ui.html("<span>Polígono → Shapefile</span>")
+                        b7.on("click", poligono_shapefile_dialog)
+
             # ── Financeiro ────────────────────────────────────────────
-            with ui.element("div").style(
-                "border-top:1px solid var(--dmc-b1);padding-top:4px;margin-top:4px;"
-            ):
-                fin_hdr = ui.element("button").classes("dmc-sidebar-toggle").style(
-                    "justify-content:space-between;width:100%;"
-                )
-                with fin_hdr:
-                    ui.html(
-                        '<span style="font:10px var(--dmc-fm);color:var(--dmc-muted2);'
-                        'letter-spacing:.15em;text-transform:uppercase">Financeiro</span>'
+            if has_access(current_user_perfil(), "fi_ver"):
+                with ui.element("div").style(
+                    "border-top:1px solid var(--dmc-b1);padding-top:4px;margin-top:4px;"
+                ):
+                    fin_hdr = ui.element("button").classes("dmc-sidebar-toggle").style(
+                        "justify-content:space-between;width:100%;"
                     )
-                    ui.html(
-                        '<span id="fin-arrow" class="material-icons" '
-                        'style="font-size:20px;color:var(--dmc-muted);transition:transform .25s">'
-                        'expand_more</span>'
-                    )
-                fin_hdr.on("click", lambda: ui.run_javascript("finToggle()"))
+                    with fin_hdr:
+                        ui.html(
+                            '<span style="font:10px var(--dmc-fm);color:var(--dmc-muted2);'
+                            'letter-spacing:.15em;text-transform:uppercase">Financeiro</span>'
+                        )
+                        ui.html(
+                            '<span id="fin-arrow" class="material-icons" '
+                            'style="font-size:20px;color:var(--dmc-muted);transition:transform .25s">'
+                            'expand_more</span>'
+                        )
+                    fin_hdr.on("click", lambda: ui.run_javascript("finToggle()"))
 
-                fin_menu = ui.element("div").style(
-                    "overflow:hidden;transition:max-height .28s ease;max-height:0;"
-                ).props('id="fin-menu"')
+                    fin_menu = ui.element("div").style(
+                        "overflow:hidden;transition:max-height .28s ease;max-height:0;"
+                    ).props('id="fin-menu"')
 
-                with fin_menu:
-                    with ui.element("div").style("padding:4px 0 8px"):
-                        b = ui.element("button").classes("dmc-sidebar-item")
-                        with b:
-                            ui.html('<span class="material-icons" style="font-size:15px;color:#4ADE80;flex-shrink:0">receipt_long</span>')
-                            ui.html("<span>NFS-e / Financeiro</span>")
-                        b.on("click", lambda: ui.run_javascript("window.open('/financeiro','_blank','noopener,noreferrer')"))
+                    with fin_menu:
+                        with ui.element("div").style("padding:4px 0 8px"):
+                            b = ui.element("button").classes("dmc-sidebar-item")
+                            with b:
+                                ui.html('<span class="material-icons" style="font-size:15px;color:#4ADE80;flex-shrink:0">receipt_long</span>')
+                                ui.html("<span>NFS-e / Financeiro</span>")
+                            b.on("click", lambda: ui.run_javascript("window.open('/financeiro','_blank','noopener,noreferrer')"))
 
             # ── Links Rápidos ──────────────────────────────────────────
             with ui.element("div").style(

@@ -1,4 +1,4 @@
-"""Conversão KML/KMZ → Shapefile compatível com SIG-RI/ONR (EPSG:4674 SIRGAS 2000)."""
+"""Conversão KML/KMZ e UTM → Shapefile (múltiplos datums)."""
 
 import io
 import struct
@@ -6,19 +6,50 @@ import zipfile as _zf
 from datetime import date as _date
 from xml.etree import ElementTree as _ET
 
-# PRJ — SIRGAS 2000 geográfico EPSG:4674 (WKT ESRI)
-# TOWGS84 omitido propositalmente: sua presença (mesmo com zeros) faz algumas
-# versões do PROJ/QGIS usar o método Helmert em vez do lookup pela AUTHORITY,
-# podendo introduzir deslocamento. Sem TOWGS84 o GIS usa o EPSG:4674 diretamente.
-_PRJ = (
-    'GEOGCS["SIRGAS 2000",'
-    'DATUM["Sistema_de_Referencia_Geocentrico_para_las_AmericaS_2000",'
-    'SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]],'
-    'AUTHORITY["EPSG","6674"]],'
-    'PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
-    'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
-    'AUTHORITY["EPSG","4674"]]'
-)
+# PRJ WKT ESRI para cada datum geográfico suportado
+# TOWGS84 omitido propositalmente: sua presença faz algumas versões do PROJ/QGIS
+# usar o método Helmert em vez do lookup pela AUTHORITY, podendo introduzir
+# deslocamento. Sem TOWGS84 o GIS usa o EPSG diretamente.
+_PRJ_BY_DATUM: dict[str, str] = {
+    'SIRGAS2000': (
+        'GEOGCS["SIRGAS 2000",'
+        'DATUM["Sistema_de_Referencia_Geocentrico_para_las_AmericaS_2000",'
+        'SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]],'
+        'AUTHORITY["EPSG","6674"]],'
+        'PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
+        'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
+        'AUTHORITY["EPSG","4674"]]'
+    ),
+    'SAD69': (
+        'GEOGCS["SAD69",'
+        'DATUM["South_American_Datum_1969",'
+        'SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]],'
+        'AUTHORITY["EPSG","6291"]],'
+        'PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
+        'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
+        'AUTHORITY["EPSG","4291"]]'
+    ),
+    'WGS84': (
+        'GEOGCS["WGS 84",'
+        'DATUM["WGS_1984",'
+        'SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],'
+        'AUTHORITY["EPSG","6326"]],'
+        'PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
+        'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
+        'AUTHORITY["EPSG","4326"]]'
+    ),
+    'Córrego Alegre': (
+        'GEOGCS["Corrego Alegre 1970-72",'
+        'DATUM["Corrego_Alegre_1970_72",'
+        'SPHEROID["International 1924",6378388,297,AUTHORITY["EPSG","7022"]],'
+        'AUTHORITY["EPSG","6225"]],'
+        'PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
+        'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
+        'AUTHORITY["EPSG","4225"]]'
+    ),
+}
+# Mantém compatibilidade com código existente
+_PRJ = _PRJ_BY_DATUM['SIRGAS2000']
 
 
 # ── Parsing KML ────────────────────────────────────────────────────────────────
@@ -195,11 +226,17 @@ def _build_dbf(names: list[str]) -> bytes:
     return buf.getvalue()
 
 
-def make_shapefile_zip(polygons: list[dict], base_name: str = 'poligonos') -> bytes:
+def make_shapefile_zip(
+    polygons: list[dict],
+    base_name: str = 'poligonos',
+    datum: str = 'SIRGAS2000',
+) -> bytes:
     """
-    Gera ZIP com .shp/.shx/.dbf/.prj/.cpg no padrão SIG-RI/ONR.
+    Gera ZIP com .shp/.shx/.dbf/.prj/.cpg.
     polygons: lista de {'name': str, 'rings': [[(lon, lat), ...]]}
+    datum: 'SIRGAS2000' | 'SAD69' | 'WGS84' | 'Córrego Alegre'
     """
+    prj = _PRJ_BY_DATUM.get(datum, _PRJ)
     if not polygons:
         raise ValueError('Nenhum polígono para exportar.')
 
@@ -241,7 +278,7 @@ def make_shapefile_zip(polygons: list[dict], base_name: str = 'poligonos') -> by
         zf.writestr(f'{base_name}.shp', shp_buf.getvalue())
         zf.writestr(f'{base_name}.shx', shx_buf.getvalue())
         zf.writestr(f'{base_name}.dbf', _build_dbf(names))
-        zf.writestr(f'{base_name}.prj', _PRJ)
+        zf.writestr(f'{base_name}.prj', prj)
         zf.writestr(f'{base_name}.cpg', 'UTF-8')
 
     return zip_buf.getvalue()

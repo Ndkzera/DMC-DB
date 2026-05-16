@@ -259,6 +259,14 @@ html, body, .nicegui-content {
 
 _SCRIPT = """
 <script>
+function maskTelefone(el){
+  var v=el.value.replace(/\D/g,'').slice(0,11);
+  if(!v){el.value='';return;}
+  if(v.length<=2){el.value='('+v;return;}
+  if(v.length<=6){el.value='('+v.slice(0,2)+') '+v.slice(2);return;}
+  if(v.length<=10){el.value='('+v.slice(0,2)+') '+v.slice(2,6)+'-'+v.slice(6);return;}
+  el.value='('+v.slice(0,2)+') '+v.slice(2,3)+' '+v.slice(3,7)+'-'+v.slice(7);
+}
 function gcSelectPerfil(el) {
   var wrap = el.closest('.gc-pills');
   if (!wrap) return;
@@ -522,6 +530,8 @@ setTimeout(function(){
   document.querySelectorAll('[data-target="ed-perfil"]').forEach(function(c){
     c.addEventListener('click', function(){ gcSelectPerfil(c); });
   });
+  var edTel=document.getElementById('ed-tel');
+  if(edTel) edTel.oninput=function(){ maskTelefone(this); };
 }, 200);
 """)
                                         dlg_ed.open()
@@ -711,11 +721,13 @@ setTimeout(function(){
 
                     btn_salvar.on("click", _salvar)
 
-    # Anexa clicks nos pills do formulário de novo usuário
+    # Anexa clicks nos pills do formulário de novo usuário + máscara de telefone
     ui.run_javascript("""
 setTimeout(function(){
   document.querySelectorAll('[data-target="nu-perfil"]').forEach(function(c){
     c.addEventListener('click', function(){ gcSelectPerfil(c); });
   });
+  var nuTel=document.getElementById('nu-tel');
+  if(nuTel) nuTel.oninput=function(){ maskTelefone(this); };
 }, 300);
 """)

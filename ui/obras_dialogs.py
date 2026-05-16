@@ -1,7 +1,7 @@
 """Diálogos de obras."""
 
 import json as _json
-from datetime import datetime
+from datetime import datetime, date as _date
 
 from nicegui import ui
 
@@ -98,6 +98,32 @@ def nova_obra_dialog(prefill_cliente: dict = None) -> None:
                 with ui.element("div").classes("dmc-card-body"):
                     ui.html(_addr_block_html("ow"))
 
+            # ── Datas da obra ─────────────────────────────────────────
+            ui.html("""
+            <div class="dmc-card" style="margin-top:14px">
+              <div class="dmc-card-hdr">
+                <span class="material-icons">date_range</span> Período da Obra
+                <span style="font:11px var(--dmc-fm);color:var(--dmc-muted2);margin-left:6px">(opcional)</span>
+              </div>
+              <div class="dmc-card-body">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                  <div>
+                    <label class="dmc-label">Data de Início</label>
+                    <input class="dmc-input" type="date" id="f-ow-dt-ini"
+                      style="color-scheme:dark;cursor:pointer">
+                  </div>
+                  <div>
+                    <label class="dmc-label">Data de Conclusão</label>
+                    <input class="dmc-input" type="date" id="f-ow-dt-fim"
+                      style="color-scheme:dark;cursor:pointer">
+                  </div>
+                </div>
+                <div id="ow-dt-err" style="display:none;font:11px var(--dmc-fm);
+                  color:#F87171;margin-top:6px"></div>
+              </div>
+            </div>
+            """)
+
             ui.element("div").style("height:12px")
 
         # ── Rodapé ────────────────────────────────────────────────────
@@ -119,7 +145,18 @@ def nova_obra_dialog(prefill_cliente: dict = None) -> None:
                   cidade: (document.getElementById('f-cidade-ow')?.value||'').trim(),
                   uf:     (document.getElementById('f-uf-ow')?.value||'').trim().toUpperCase(),
                   maps:   (document.getElementById('f-maps-ow')?.value||'').trim(),
+                  dt_ini: (document.getElementById('f-ow-dt-ini')?.value||'').trim(),
+                  dt_fim: (document.getElementById('f-ow-dt-fim')?.value||'').trim(),
                 })""")
+
+            def _iso_to_br(iso: str) -> str:
+                """Convert YYYY-MM-DD → DD/MM/YYYY for storage."""
+                if iso and len(iso) == 10:
+                    try:
+                        return _date.fromisoformat(iso).strftime("%d/%m/%Y")
+                    except ValueError:
+                        pass
+                return ""
 
             def _build_obra(vals: dict) -> dict:
                 ts = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -137,8 +174,22 @@ def nova_obra_dialog(prefill_cliente: dict = None) -> None:
                     "obra_estado":  vals["uf"],
                     "obra_maps":    vals["maps"],
                     "status":       "ativo",
+                    "data_inicio":  _iso_to_br(vals.get("dt_ini", "")),
+                    "data_fim":     _iso_to_br(vals.get("dt_fim", "")),
                     "data":         datetime.now().strftime("%d/%m/%Y %H:%M"),
                 }
+
+            def _validate_dates(vals: dict) -> str | None:
+                """Return error message string or None if OK."""
+                ini = vals.get("dt_ini", "")
+                fim = vals.get("dt_fim", "")
+                if ini and fim:
+                    try:
+                        if _date.fromisoformat(ini) > _date.fromisoformat(fim):
+                            return "A data de conclusão não pode ser anterior à data de início."
+                    except ValueError:
+                        return "Data inválida."
+                return None
 
             async def salvar():
                 vals = await _collect()
@@ -148,6 +199,17 @@ def nova_obra_dialog(prefill_cliente: dict = None) -> None:
                 if not vals.get("log"):
                     ui.notify("Preencha o logradouro.", type="warning")
                     return
+                dt_err = _validate_dates(vals)
+                if dt_err:
+                    ui.notify(dt_err, type="warning")
+                    ui.run_javascript(
+                        f"var e=document.getElementById('ow-dt-err');"
+                        f"if(e){{e.textContent={repr(dt_err)};e.style.display='block';}}"
+                    )
+                    return
+                ui.run_javascript(
+                    "var e=document.getElementById('ow-dt-err');if(e)e.style.display='none';"
+                )
                 add_obra(_build_obra(vals),
                          usuario=current_user_label(), perfil=current_user_perfil())
                 ui.notify(f"✓ Obra cadastrada para '{vals['nome']}'!", type="positive")
@@ -160,6 +222,10 @@ def nova_obra_dialog(prefill_cliente: dict = None) -> None:
                     return
                 if not vals.get("log"):
                     ui.notify("Preencha o logradouro.", type="warning")
+                    return
+                dt_err = _validate_dates(vals)
+                if dt_err:
+                    ui.notify(dt_err, type="warning")
                     return
                 add_obra(_build_obra(vals),
                          usuario=current_user_label(), perfil=current_user_perfil())

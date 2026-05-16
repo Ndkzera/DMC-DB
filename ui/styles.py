@@ -589,6 +589,14 @@ function maskCEP(v){
   if(v.length>5) v=v.slice(0,5)+'-'+v.slice(5);
   return v;
 }
+function maskBRL(v){
+  var d=v.replace(/\D/g,'');
+  if(!d)return 'R$ 0,00';
+  while(d.length<3)d='0'+d;
+  var c=d.slice(-2),r=d.slice(0,-2).replace(/^0+/,'')||'0';
+  r=r.replace(/\B(?=(\d{3})+(?!\d))/g,'.');
+  return 'R$ '+r+','+c;
+}
 function tcase(s){
   return (s||'').toUpperCase();
 }
@@ -796,6 +804,10 @@ HEADER_HTML = """
   <div style="width:1px;height:24px;background:var(--dmc-b1);margin:0 8px"></div>
 
   <div id="dmc-active-slot"></div>
+
+  <div style="width:1px;height:24px;background:var(--dmc-b1);margin:0 8px"></div>
+
+  <div id="dmc-notif-slot"></div>
 
   <div style="width:1px;height:24px;background:var(--dmc-b1);margin:0 8px"></div>
 

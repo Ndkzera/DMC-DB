@@ -1584,26 +1584,455 @@ def _build_report_html(
 </html>'''
 
 
+_MESES_PT = {
+    '01':'Janeiro','02':'Fevereiro','03':'Março','04':'Abril',
+    '05':'Maio','06':'Junho','07':'Julho','08':'Agosto',
+    '09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro',
+}
+_MESES_ABBR = {
+    '01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun',
+    '07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez',
+}
+
+
+def _gerar_word_doc(tipo: str, mes: str, ano: str, cfg: dict) -> bytes:
+    """Gera relatório financeiro .docx e retorna os bytes."""
+    import io
+    from collections import defaultdict
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from services.financeiro import (
+        load_contas_pagar, load_contas_receber, load_categorias_pagar,
+    )
+    from services.nfse import list_nfse
+
+    all_pagar   = load_contas_pagar()
+    all_receber = load_contas_receber()
+    all_nfse    = list_nfse()
+    all_cats    = load_categorias_pagar()
+
+    empresa  = cfg.get('razao_social') or 'Empresa'
+    cnpj_raw = cfg.get('cnpj') or ''
+    cnpj_fmt = (
+        f'{cnpj_raw[:2]}.{cnpj_raw[2:5]}.{cnpj_raw[5:8]}/{cnpj_raw[8:12]}-{cnpj_raw[12:]}'
+        if len(cnpj_raw) == 14 else cnpj_raw
+    )
+    aliq     = float(cfg.get('aliquota_iss', '5.00') or '5.00')
+    hoje_str = datetime.now().strftime('%d/%m/%Y %H:%M')
+    mes_nome = _MESES_PT.get(mes, mes)
+    mes_ano_str = f"{mes_nome} / {ano}"
+    mes_ano  = f"{ano}-{mes}"
+
+    def _d2m(s: str) -> str:
+        s = (s or '').strip()
+        if len(s) >= 7 and s[4:5] == '-':
+            return s[:7]
+        if len(s) >= 7 and s[2:3] == '/':
+            return f"{s[6:10]}-{s[3:5]}"
+        return ''
+
+    def _brl(v) -> str:
+        try:
+            f = float(v or 0)
+        except (ValueError, TypeError):
+            f = 0.0
+        return f'R$ {f:,.2f}'.replace(',','X').replace('.', ',').replace('X','.')
+
+    def _filtro_mes(items, campo, fb='data_criacao'):
+        out = []
+        for i in items:
+            v = _d2m(i.get(campo) or '')
+            if not v:
+                v = _d2m(i.get(fb) or '')
+            if v == mes_ano:
+                out.append(i)
+        return out
+
+    pagar_mes   = _filtro_mes(all_pagar,   'data_venc')
+    receber_mes = _filtro_mes(all_receber, 'data_venc')
+    nfse_mes    = [e for e in all_nfse if _d2m(e.get('emitido_em','') or '') == mes_ano]
+
+    # ── Document setup ────────────────────────────────────────────────
+    doc = Document()
+    for sec in doc.sections:
+        sec.top_margin    = Inches(0.75)
+        sec.bottom_margin = Inches(0.75)
+        sec.left_margin   = Inches(0.9)
+        sec.right_margin  = Inches(0.9)
+
+    R = WD_ALIGN_PARAGRAPH.RIGHT
+    C = WD_ALIGN_PARAGRAPH.CENTER
+    L = WD_ALIGN_PARAGRAPH.LEFT
+
+    def _rgb(hex_c: str):
+        h = hex_c.lstrip('#')
+        return RGBColor(int(h[0:2],16), int(h[2:4],16), int(h[4:6],16))
+
+    def _set_cell_bg(cell, hex_c: str):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear')
+        shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), hex_c.lstrip('#'))
+        tcPr.append(shd)
+
+    def _doc_header(title: str, periodo: str):
+        h = doc.add_heading(title, level=0)
+        h.alignment = C
+        if h.runs:
+            h.runs[0].font.color.rgb = _rgb('#15803d')
+            h.runs[0].font.size = Pt(20)
+        p = doc.add_paragraph()
+        p.alignment = C
+        r = p.add_run(f"{empresa}  |  CNPJ: {cnpj_fmt}")
+        r.font.size = Pt(10)
+        r.font.color.rgb = _rgb('#6b7280')
+        p2 = doc.add_paragraph()
+        p2.alignment = C
+        r2 = p2.add_run(f"Período: {periodo}  ·  Gerado em {hoje_str}")
+        r2.font.size = Pt(9)
+        r2.font.color.rgb = _rgb('#9ca3af')
+        doc.add_paragraph()
+
+    def _section_heading(title: str, color: str = '#374151'):
+        h = doc.add_heading(title, level=1)
+        if h.runs:
+            h.runs[0].font.color.rgb = _rgb(color)
+            h.runs[0].font.size = Pt(12)
+
+    def _kpi_table(items):
+        cols = min(len(items), 4)
+        rows = (len(items) + cols - 1) // cols
+        tbl = doc.add_table(rows=rows, cols=cols)
+        tbl.style = 'Table Grid'
+        for idx, (lbl, val, col) in enumerate(items):
+            cell = tbl.cell(idx // cols, idx % cols)
+            _set_cell_bg(cell, 'F9FAFB')
+            p = cell.paragraphs[0]
+            p.clear()
+            rl = p.add_run(lbl.upper() + '\n')
+            rl.font.size = Pt(8)
+            rl.font.color.rgb = _rgb('#6b7280')
+            rv = p.add_run(val)
+            rv.bold = True
+            rv.font.size = Pt(14)
+            rv.font.color.rgb = _rgb(col)
+        doc.add_paragraph()
+
+    def _data_table(headers, rows_data, totals_row=None):
+        ncols = len(headers)
+        nrows = 1 + len(rows_data) + (1 if totals_row else 0)
+        tbl = doc.add_table(rows=nrows, cols=ncols)
+        tbl.style = 'Table Grid'
+        # Header
+        for ci, h in enumerate(headers):
+            cell = tbl.rows[0].cells[ci]
+            _set_cell_bg(cell, 'F3F4F6')
+            p = cell.paragraphs[0]
+            p.alignment = C
+            run = p.add_run(h.upper())
+            run.bold = True
+            run.font.size = Pt(8)
+            run.font.color.rgb = _rgb('#6b7280')
+        # Data
+        for ri, row_data in enumerate(rows_data):
+            for ci, cd in enumerate(row_data):
+                cell = tbl.rows[ri + 1].cells[ci]
+                if isinstance(cd, tuple):
+                    text  = str(cd[0])
+                    color = cd[1] if len(cd) > 1 else None
+                    align = cd[2] if len(cd) > 2 else L
+                    bold  = cd[3] if len(cd) > 3 else False
+                else:
+                    text, color, align, bold = str(cd), None, L, False
+                p = cell.paragraphs[0]
+                p.alignment = align
+                run = p.add_run(text)
+                run.font.size = Pt(9)
+                run.bold = bold
+                if color:
+                    run.font.color.rgb = _rgb(color)
+        # Totals
+        if totals_row:
+            for ci, cd in enumerate(totals_row):
+                cell = tbl.rows[-1].cells[ci]
+                _set_cell_bg(cell, 'F9FAFB')
+                if isinstance(cd, tuple):
+                    text  = str(cd[0])
+                    color = cd[1] if len(cd) > 1 else None
+                    align = cd[2] if len(cd) > 2 else L
+                else:
+                    text, color, align = str(cd), None, L
+                p = cell.paragraphs[0]
+                p.alignment = align
+                run = p.add_run(text)
+                run.bold = True
+                run.font.size = Pt(9)
+                if color:
+                    run.font.color.rgb = _rgb(color)
+        doc.add_paragraph()
+
+    # ── a. Balanço Geral Mensal ───────────────────────────────────────
+    if tipo == 'balanco_mes':
+        _doc_header('Balanço Geral Mensal', mes_ano_str)
+        nfse_t  = sum(float(e.get('valor',0) or 0) for e in nfse_mes)
+        cp_t    = sum(float(c.get('valor',0) or 0) for c in pagar_mes)
+        cp_pago = sum(float(c.get('valor',0) or 0) for c in pagar_mes if c.get('status')=='pago')
+        cr_t    = sum(float(c.get('valor_total',0) or 0) for c in receber_mes)
+        cr_r    = sum(float(c.get('valor_pago',0) or 0) for c in receber_mes)
+        saldo   = round(cr_r - cp_pago, 2)
+        _kpi_table([
+            ('NFS-e Emitidas',     _brl(nfse_t),  '#15803d'),
+            ('Receitas Recebidas', _brl(cr_r),     '#1d4ed8'),
+            ('Despesas Pagas',     _brl(cp_pago),  '#dc2626'),
+            ('Saldo',              _brl(saldo),    '#15803d' if saldo >= 0 else '#dc2626'),
+        ])
+        _section_heading('Notas Fiscais de Serviço', '#15803d')
+        _data_table(
+            ['Nº','Tomador','Descrição','Valor','ISS','Status','Emitida'],
+            [[
+                f'#{e.get("numero","—")}',
+                e.get('tomador','—'),
+                (e.get('descricao','—') or '')[:50],
+                (_brl(float(e.get('valor',0) or 0)), '#15803d', R),
+                (_brl(round(float(e.get('valor',0) or 0)*aliq/100,2)), '#6b7280', R),
+                ('EMITIDA' if (e.get('sucesso') and e.get('ambiente')=='producao')
+                 else ('HOMO' if e.get('sucesso') else 'ERRO'),
+                 '#15803d' if (e.get('sucesso') and e.get('ambiente')=='producao')
+                 else ('#b45309' if e.get('sucesso') else '#dc2626'), C),
+                ((e.get('emitido_em','') or '')[:10], None, C),
+            ] for e in nfse_mes],
+            totals_row=[(f'Total: {len(nfse_mes)} nota(s)','#6b7280',L),'','',
+                        (_brl(nfse_t),'#15803d',R),'','',''],
+        )
+        _section_heading('Contas a Pagar', '#dc2626')
+        _data_table(
+            ['Descrição','Categoria','Obra','Valor','Vencimento','Pagamento','Status'],
+            [[
+                c.get('descricao','—'),
+                c.get('categoria_nome','—'),
+                c.get('obra_nome','—'),
+                (_brl(c.get('valor',0)), '#dc2626', R),
+                (c.get('data_venc','—'), None, C),
+                (c.get('data_pag','—') if c.get('status')=='pago' else '—', None, C),
+                (c.get('status','pendente').upper(),
+                 {'pago':'#15803d','pendente':'#b45309','cancelado':'#6b7280'}.get(c.get('status','pendente'),'#6b7280'), C),
+            ] for c in pagar_mes],
+            totals_row=[(f'{len(pagar_mes)} conta(s)','#6b7280',L),'','',
+                        (_brl(cp_t),'#dc2626',R),'','',''],
+        )
+        _section_heading('Contas a Receber', '#1d4ed8')
+        _data_table(
+            ['Descrição','Cliente','Obra','Total','Recebido','Vencimento','Status'],
+            [[
+                c.get('descricao','—'),
+                c.get('cliente_nome','—'),
+                c.get('obra_nome','—'),
+                (_brl(c.get('valor_total',0)), '#1d4ed8', R),
+                (_brl(c.get('valor_pago',0)), '#15803d', R),
+                (c.get('data_venc','—'), None, C),
+                (c.get('status','aberto').upper(),
+                 {'quitado':'#15803d','parcial':'#b45309','aberto':'#1d4ed8','cancelado':'#6b7280'}.get(c.get('status','aberto'),'#6b7280'), C),
+            ] for c in receber_mes],
+            totals_row=[(f'{len(receber_mes)} conta(s)','#6b7280',L),'','',
+                        (_brl(cr_t),'#1d4ed8',R),(_brl(cr_r),'#15803d',R),'',''],
+        )
+
+    # ── b. Balanço Geral Anual ────────────────────────────────────────
+    elif tipo == 'balanco_ano':
+        _doc_header('Balanço Geral Anual', ano)
+        _section_heading('Resumo por Mês', '#374151')
+        meses_list = ['01','02','03','04','05','06','07','08','09','10','11','12']
+        ano_rows = []
+        tt_nfse = tt_cp = tt_cr = tt_receb = tt_pago = 0.0
+        for m in meses_list:
+            ma = f"{ano}-{m}"
+            ne  = [e for e in all_nfse    if _d2m(e.get('emitido_em','') or '') == ma]
+            cp  = [c for c in all_pagar   if (_d2m(c.get('data_venc','') or '') or _d2m(c.get('data_criacao','') or '')) == ma]
+            cr  = [c for c in all_receber if (_d2m(c.get('data_venc','') or '') or _d2m(c.get('data_criacao','') or '')) == ma]
+            nv  = sum(float(e.get('valor',0) or 0) for e in ne)
+            cpv = sum(float(c.get('valor',0) or 0) for c in cp)
+            crv = sum(float(c.get('valor_total',0) or 0) for c in cr)
+            crr = sum(float(c.get('valor_pago',0)  or 0) for c in cr)
+            cpp = sum(float(c.get('valor',0) or 0) for c in cp if c.get('status')=='pago')
+            sl  = round(crr - cpp, 2)
+            tt_nfse += nv; tt_cp += cpv; tt_cr += crv; tt_receb += crr; tt_pago += cpp
+            ano_rows.append([
+                (_MESES_ABBR.get(m,m)+f'/{ano[-2:]}', None, L, True),
+                (f'{len(ne)}', '#6b7280', C),
+                (_brl(nv), '#15803d', R),
+                (_brl(cpv), '#dc2626', R),
+                (_brl(crv), '#1d4ed8', R),
+                (_brl(crr), '#15803d', R),
+                (_brl(sl), '#15803d' if sl >= 0 else '#dc2626', R, True),
+            ])
+        tt_sl = round(tt_receb - tt_pago, 2)
+        _data_table(
+            ['Mês','NFS-e','Fat. NFS-e','Total Pagar','Total Receber','Recebido','Saldo'],
+            ano_rows,
+            totals_row=[
+                ('TOTAL ANUAL','#374151',L),'',
+                (_brl(tt_nfse),'#15803d',R),
+                (_brl(tt_cp),'#dc2626',R),
+                (_brl(tt_cr),'#1d4ed8',R),
+                (_brl(tt_receb),'#15803d',R),
+                (_brl(tt_sl),'#15803d' if tt_sl>=0 else '#dc2626',R),
+            ],
+        )
+
+    # ── c. Contas a Pagar Mensal ──────────────────────────────────────
+    elif tipo == 'pagar_mes':
+        _doc_header('Contas a Pagar — Mensal', mes_ano_str)
+        cp_t  = sum(float(c.get('valor',0) or 0) for c in pagar_mes)
+        cp_pg = sum(float(c.get('valor',0) or 0) for c in pagar_mes if c.get('status')=='pago')
+        cp_pe = sum(float(c.get('valor',0) or 0) for c in pagar_mes if c.get('status')=='pendente')
+        cp_ca = sum(float(c.get('valor',0) or 0) for c in pagar_mes if c.get('status')=='cancelado')
+        _kpi_table([
+            ('Total',     _brl(cp_t),  '#374151'),
+            ('Pago',      _brl(cp_pg), '#15803d'),
+            ('Pendente',  _brl(cp_pe), '#b45309'),
+            ('Cancelado', _brl(cp_ca), '#6b7280'),
+        ])
+        _section_heading('Lançamentos', '#dc2626')
+        _data_table(
+            ['Descrição','Categoria','Obra','Valor','Vencimento','Pagamento','Obs.','Status'],
+            [[
+                c.get('descricao','—'),
+                c.get('categoria_nome','—'),
+                c.get('obra_nome','—'),
+                (_brl(c.get('valor',0)), '#dc2626', R),
+                (c.get('data_venc','—'), None, C),
+                (c.get('data_pag','—') if c.get('status')=='pago' else '—', None, C),
+                ((c.get('observacao','') or '')[:40], '#6b7280', L),
+                (c.get('status','pendente').upper(),
+                 {'pago':'#15803d','pendente':'#b45309','cancelado':'#6b7280'}.get(c.get('status','pendente'),'#6b7280'), C),
+            ] for c in pagar_mes],
+            totals_row=[(f'{len(pagar_mes)} conta(s)','#6b7280',L),'','',
+                        (_brl(cp_t),'#dc2626',R),'','','',''],
+        )
+
+    # ── d. Contas a Receber Mensal ────────────────────────────────────
+    elif tipo == 'receber_mes':
+        _doc_header('Contas a Receber — Mensal', mes_ano_str)
+        cr_t = sum(float(c.get('valor_total',0) or 0) for c in receber_mes)
+        cr_r = sum(float(c.get('valor_pago',0)  or 0) for c in receber_mes)
+        cr_p = round(cr_t - cr_r, 2)
+        _kpi_table([
+            ('Total a Receber', _brl(cr_t), '#1d4ed8'),
+            ('Recebido',        _brl(cr_r), '#15803d'),
+            ('Pendente',        _brl(cr_p), '#b45309'),
+        ])
+        _section_heading('Lançamentos', '#1d4ed8')
+        _data_table(
+            ['Descrição','Cliente','CPF','Obra','Total','Recebido','Parcelas','Vencimento','Status'],
+            [[
+                c.get('descricao','—'),
+                c.get('cliente_nome','—'),
+                c.get('cliente_cpf','—'),
+                c.get('obra_nome','—'),
+                (_brl(c.get('valor_total',0)), '#1d4ed8', R),
+                (_brl(c.get('valor_pago',0)), '#15803d', R),
+                (f'{len(c.get("pagamentos",[]))}/{c.get("parcelas",1)}', '#6b7280', C),
+                (c.get('data_venc','—'), None, C),
+                (c.get('status','aberto').upper(),
+                 {'quitado':'#15803d','parcial':'#b45309','aberto':'#1d4ed8','cancelado':'#6b7280'}.get(c.get('status','aberto'),'#6b7280'), C),
+            ] for c in receber_mes],
+            totals_row=[(f'{len(receber_mes)} conta(s)','#6b7280',L),'','','',
+                        (_brl(cr_t),'#1d4ed8',R),(_brl(cr_r),'#15803d',R),'','',''],
+        )
+
+    # ── e. Por Categoria Mensal ───────────────────────────────────────
+    elif tipo == 'categoria_mes':
+        _doc_header('Relatório por Categoria Mensal', mes_ano_str)
+        cats_map = {c['id']: c for c in all_cats}
+        by_cat: dict = defaultdict(list)
+        sem_cat = []
+        for c in pagar_mes:
+            cid = c.get('categoria_id','')
+            if cid and cid in cats_map:
+                by_cat[cid].append(c)
+            else:
+                sem_cat.append(c)
+        grand = 0.0
+        for cid, contas in sorted(by_cat.items(), key=lambda x: cats_map[x[0]].get('nome','').lower()):
+            cat_nome = cats_map[cid].get('nome','—')
+            sub = sum(float(c.get('valor',0) or 0) for c in contas)
+            grand += sub
+            _section_heading(f'Categoria: {cat_nome}', '#374151')
+            _data_table(
+                ['Descrição','Obra','Valor','Vencimento','Status'],
+                [[
+                    c.get('descricao','—'), c.get('obra_nome','—'),
+                    (_brl(c.get('valor',0)), '#dc2626', R),
+                    (c.get('data_venc','—'), None, C),
+                    (c.get('status','pendente').upper(),
+                     {'pago':'#15803d','pendente':'#b45309','cancelado':'#6b7280'}.get(c.get('status','pendente'),'#6b7280'), C),
+                ] for c in contas],
+                totals_row=[(f'Subtotal — {cat_nome}','#374151',L),'',
+                            (_brl(sub),'#dc2626',R),'',''],
+            )
+        if sem_cat:
+            sub_sc = sum(float(c.get('valor',0) or 0) for c in sem_cat)
+            grand += sub_sc
+            _section_heading('Sem Categoria', '#6b7280')
+            _data_table(
+                ['Descrição','Obra','Valor','Vencimento','Status'],
+                [[
+                    c.get('descricao','—'), c.get('obra_nome','—'),
+                    (_brl(c.get('valor',0)), '#dc2626', R),
+                    (c.get('data_venc','—'), None, C),
+                    (c.get('status','pendente').upper(),
+                     {'pago':'#15803d','pendente':'#b45309','cancelado':'#6b7280'}.get(c.get('status','pendente'),'#6b7280'), C),
+                ] for c in sem_cat],
+                totals_row=[('Subtotal — Sem Categoria','#6b7280',L),'',
+                            (_brl(sub_sc),'#dc2626',R),'',''],
+            )
+        p = doc.add_paragraph()
+        p.alignment = R
+        run = p.add_run(f'TOTAL GERAL: {_brl(grand)}')
+        run.bold = True
+        run.font.size = Pt(13)
+        run.font.color.rgb = _rgb('#dc2626')
+
+    # ── Footer ────────────────────────────────────────────────────────
+    doc.add_paragraph()
+    fp = doc.add_paragraph()
+    fp.alignment = C
+    fr = fp.add_run(f'DMC Topografia · Sistema de Gestão · {hoje_str}')
+    fr.font.size = Pt(8)
+    fr.font.color.rgb = _rgb('#9ca3af')
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
 def relatorio_financeiro_dialog() -> None:
     cfg = load_config()
-    _st = {
-        'periodo':     'mes_atual',
-        'de':          '',
-        'ate':         '',
-        'inc_emitida': True,
-        'inc_homo':    True,
-        'inc_erro':    True,
-        'inc_pagar':   True,
-        'inc_receber': True,
-    }
+    hoje = datetime.now()
 
-    _PERIODOS = [
-        ('mes_atual',    'Mês atual'),
-        ('mes_anterior', 'Mês anterior'),
-        ('3meses',       'Últimos 3 meses'),
-        ('ano_atual',    'Ano atual'),
-        ('personalizado','Período personalizado'),
+    _TIPOS = [
+        ('balanco_mes',   'a. Balanço Geral por Mês'),
+        ('balanco_ano',   'b. Balanço Geral por Ano'),
+        ('pagar_mes',     'c. Balanço Contas a Pagar Mensal'),
+        ('receber_mes',   'd. Balanço Contas a Receber Mensal'),
+        ('categoria_mes', 'e. Relatório por Categoria Mensal'),
     ]
+    _TIPOS_SEM_MES = {'balanco_ano'}
+
+    anos_disponiveis = [str(y) for y in range(hoje.year, hoje.year - 6, -1)]
+    meses_disponiveis = [
+        ('01','Janeiro'),('02','Fevereiro'),('03','Março'),('04','Abril'),
+        ('05','Maio'),('06','Junho'),('07','Julho'),('08','Agosto'),
+        ('09','Setembro'),('10','Outubro'),('11','Novembro'),('12','Dezembro'),
+    ]
+    mes_cur = f'{hoje.month:02d}'
+    ano_cur = str(hoje.year)
 
     with ui.dialog() as dlg, ui.card().style(
         'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
@@ -1615,6 +2044,7 @@ def relatorio_financeiro_dialog() -> None:
             'color:var(--dmc-muted);position:absolute;top:12px;right:12px;z-index:10;'
         )
 
+        # ── Cabeçalho ──────────────────────────────────────────────────
         with ui.element('div').style(
             'padding:18px 24px;border-bottom:1px solid var(--dmc-b1);'
             'display:flex;align-items:center;gap:14px;flex-shrink:0;padding-right:52px;'
@@ -1627,155 +2057,141 @@ def relatorio_financeiro_dialog() -> None:
             )
             with ui.element('div'):
                 ui.html('<div style="font:700 16px var(--dmc-fd);color:var(--dmc-text)">Relatório Financeiro</div>')
-                ui.html('<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">NFS-e emitidas — exporta como PDF / impressão</div>')
+                ui.html('<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">'
+                        'Gera arquivo Word (.docx) para download</div>')
 
-        with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0'):
+        # ── Corpo ──────────────────────────────────────────────────────
+        with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0;'
+                                     'display:flex;flex-direction:column;gap:16px'):
+
+            # Tipo de relatório
+            _tipo_id = f'rfi-tipo-{id(dlg)}'
+            ui.html('<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                    'letter-spacing:.14em;text-transform:uppercase;margin-bottom:6px">Tipo de Relatório</div>')
+            _tipo_opts = ''.join(
+                f'<option value="{k}"{"  selected" if k == "balanco_mes" else ""}>{v}</option>'
+                for k, v in _TIPOS
+            )
+            ui.html(f'<select id="{_tipo_id}" class="dmc-input" style="cursor:pointer">{_tipo_opts}</select>')
 
             # Período
-            ui.html(
-                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
-                'letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">Período</div>'
+            ui.html('<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                    'letter-spacing:.14em;text-transform:uppercase;margin-bottom:6px">Período</div>')
+
+            _mes_box_id = f'rfi-mesbox-{id(dlg)}'
+            _mes_id     = f'rfi-mes-{id(dlg)}'
+            _ano_id     = f'rfi-ano-{id(dlg)}'
+
+            _mes_opts = ''.join(
+                f'<option value="{k}"{"  selected" if k == mes_cur else ""}>{v}</option>'
+                for k, v in meses_disponiveis
             )
-            _per_id = f'rfi-per-{id(dlg)}'
-            _opts_html = ''.join(
-                f'<option value="{k}"{"  selected" if k == "mes_atual" else ""}>{v}</option>'
-                for k, v in _PERIODOS
+            _ano_opts = ''.join(
+                f'<option value="{a}"{"  selected" if a == ano_cur else ""}>{a}</option>'
+                for a in anos_disponiveis
             )
             ui.html(
-                f'<select id="{_per_id}" class="dmc-input" style="margin-bottom:12px;cursor:pointer">'
-                f'{_opts_html}</select>'
+                f'<div style="display:grid;grid-template-columns:1fr 120px;gap:10px">'
+                f'<div id="{_mes_box_id}">'
+                f'<select id="{_mes_id}" class="dmc-input" style="cursor:pointer">{_mes_opts}</select>'
+                f'</div>'
+                f'<select id="{_ano_id}" class="dmc-input" style="cursor:pointer">{_ano_opts}</select>'
+                f'</div>'
             )
 
-            _cbox_id = f'rfi-cbox-{id(dlg)}'
-            custom_box = ui.element('div').props(f'id={_cbox_id}').style(
-                'display:none;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px'
+            # Tipos de relatório disponíveis (descrição)
+            ui.html(
+                '<div style="background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.18);'
+                'border-radius:10px;padding:12px 14px">'
+                '<div style="font:600 11px var(--dmc-mono);color:#60A5FA;margin-bottom:8px;'
+                'text-transform:uppercase;letter-spacing:.08em">Tipos disponíveis</div>'
+                '<div style="display:flex;flex-direction:column;gap:5px;font:12px var(--dmc-fm);color:var(--dmc-muted2)">'
+                '<span><b style="color:var(--dmc-text)">a. Balanço Geral por Mês</b> — NFS-e, Pagar e Receber do mês</span>'
+                '<span><b style="color:var(--dmc-text)">b. Balanço Geral por Ano</b> — tabela com os 12 meses do ano</span>'
+                '<span><b style="color:var(--dmc-text)">c. Contas a Pagar Mensal</b> — todos os lançamentos do mês</span>'
+                '<span><b style="color:var(--dmc-text)">d. Contas a Receber Mensal</b> — todos os recebimentos do mês</span>'
+                '<span><b style="color:var(--dmc-text)">e. Por Categoria Mensal</b> — despesas agrupadas por categoria</span>'
+                '</div></div>'
             )
-            with custom_box:
-                with ui.element('div'):
-                    ui.html('<label class="dmc-label">De</label>')
-                    ui.html(
-                        '<input type="date" id="rfi-de" class="dmc-input"'
-                        ' style="font:var(--dmc-mono)">'
-                    )
-                with ui.element('div'):
-                    ui.html('<label class="dmc-label">Até</label>')
-                    ui.html(
-                        '<input type="date" id="rfi-ate" class="dmc-input"'
-                        ' style="font:var(--dmc-mono)">'
-                    )
 
-            async def _setup_periodo():
+            async def _setup_tipo():
                 await ui.run_javascript(
                     f'(function(){{'
-                    f'var sel=document.getElementById("{_per_id}");'
-                    f'var box=document.getElementById("{_cbox_id}");'
-                    f'if(!sel)return;'
-                    f'sel.addEventListener("change",function(){{'
-                    f'if(box)box.style.display=this.value==="personalizado"?"grid":"none";'
-                    f'}});'
+                    f'var sel=document.getElementById("{_tipo_id}");'
+                    f'var mb=document.getElementById("{_mes_box_id}");'
+                    f'var semMes={list(_TIPOS_SEM_MES)};'
+                    f'function upd(){{if(mb)mb.style.display=semMes.indexOf(sel.value)>=0?"none":"block";}}'
+                    f'if(sel)sel.addEventListener("change",upd);'
+                    f'upd();'
                     f'}})()'
                 )
-            ui.timer(0.15, _setup_periodo, once=True)
+            ui.timer(0.15, _setup_tipo, once=True)
 
-            # Filtro de status NFS-e
-            ui.html(
-                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
-                'letter-spacing:.14em;text-transform:uppercase;margin-top:4px;margin-bottom:10px">'
-                'Incluir NFS-e por status</div>'
-            )
-            ui.html(
-                '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">'
-                '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;'
-                'font:13px var(--dmc-fm);color:var(--dmc-text)">'
-                '<input type="checkbox" id="rfi-emit" checked style="accent-color:#4ADE80;width:15px;height:15px">'
-                ' <span style="color:#4ADE80;font:600 10px var(--dmc-mono)">EMITIDA</span>'
-                ' <span style="color:var(--dmc-muted2);font-size:12px">— produção</span></label>'
-                '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;'
-                'font:13px var(--dmc-fm);color:var(--dmc-text)">'
-                '<input type="checkbox" id="rfi-homo" checked style="accent-color:#FBBF24;width:15px;height:15px">'
-                ' <span style="color:#FBBF24;font:600 10px var(--dmc-mono)">HOMOLOGAÇÃO</span>'
-                ' <span style="color:var(--dmc-muted2);font-size:12px">— testes</span></label>'
-                '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;'
-                'font:13px var(--dmc-fm);color:var(--dmc-text)">'
-                '<input type="checkbox" id="rfi-erro" checked style="accent-color:#F87171;width:15px;height:15px">'
-                ' <span style="color:#F87171;font:600 10px var(--dmc-mono)">ERRO</span>'
-                ' <span style="color:var(--dmc-muted2);font-size:12px">— falhas de emissão</span></label>'
-                '</div>'
-            )
-
-            # Incluir seções no relatório
-            ui.html(
-                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
-                'letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">'
-                'Incluir seções</div>'
-            )
-            ui.html(
-                '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:4px">'
-                '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;'
-                'font:13px var(--dmc-fm);color:var(--dmc-text)">'
-                '<input type="checkbox" id="rfi-inc-pagar" checked style="accent-color:#F87171;width:15px;height:15px">'
-                ' <span style="color:#F87171;font:600 10px var(--dmc-mono)">CONTAS A PAGAR</span></label>'
-                '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;'
-                'font:13px var(--dmc-fm);color:var(--dmc-text)">'
-                '<input type="checkbox" id="rfi-inc-receber" checked style="accent-color:#4ADE80;width:15px;height:15px">'
-                ' <span style="color:#4ADE80;font:600 10px var(--dmc-mono)">CONTAS A RECEBER</span></label>'
-                '</div>'
-            )
-
+        # ── Rodapé ─────────────────────────────────────────────────────
         with ui.element('div').style(
             'padding:14px 24px;border-top:1px solid var(--dmc-b1);'
             'display:flex;justify-content:flex-end;gap:10px;flex-shrink:0'
         ):
             ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
 
+            _gerar_btn_ref: dict = {}
+
             async def _gerar():
-                from services.financeiro import load_contas_pagar, load_contas_receber
-                vals = await ui.run_javascript(
-                    f'(function(){{'
-                    f'var s=document.getElementById("{_per_id}");'
-                    f'return {{'
-                    f'periodo:s?s.value:"mes_atual",'
-                    f'de:(document.getElementById("rfi-de")||{{}}).value||"",'
-                    f'ate:(document.getElementById("rfi-ate")||{{}}).value||"",'
-                    f'inc_emitida:!!(document.getElementById("rfi-emit")||{{}}).checked,'
-                    f'inc_homo:!!(document.getElementById("rfi-homo")||{{}}).checked,'
-                    f'inc_erro:!!(document.getElementById("rfi-erro")||{{}}).checked,'
-                    f'inc_pagar:!!(document.getElementById("rfi-inc-pagar")||{{}}).checked,'
-                    f'inc_receber:!!(document.getElementById("rfi-inc-receber")||{{}}).checked,'
-                    f'}};}})()'
-                )
-                if isinstance(vals, dict):
-                    _st.update(vals)
+                btn = _gerar_btn_ref.get('btn')
+                if btn:
+                    btn.props('loading=true disabled=true')
+                try:
+                    vals = await ui.run_javascript(
+                        f'(function(){{'
+                        f'var t=document.getElementById("{_tipo_id}");'
+                        f'var m=document.getElementById("{_mes_id}");'
+                        f'var a=document.getElementById("{_ano_id}");'
+                        f'return{{tipo:t?t.value:"balanco_mes",'
+                        f'mes:m?m.value:"{mes_cur}",'
+                        f'ano:a?a.value:"{ano_cur}"}};'
+                        f'}})()'
+                    )
+                    if not isinstance(vals, dict):
+                        ui.notify('Erro ao ler formulário', color='negative')
+                        return
+                    tipo = vals.get('tipo', 'balanco_mes')
+                    mes  = vals.get('mes', mes_cur)
+                    ano  = vals.get('ano', ano_cur)
 
-                entries = _filter_entries(
-                    list_nfse(),
-                    _st['periodo'], _st['de'], _st['ate'],
-                    bool(_st['inc_emitida']),
-                    bool(_st['inc_homo']),
-                    bool(_st['inc_erro']),
-                )
+                    doc_bytes = _gerar_word_doc(tipo, mes, ano, cfg)
+                    b64 = base64.b64encode(doc_bytes).decode()
 
-                periodo_label = dict(_PERIODOS).get(_st['periodo'], _st['periodo'])
-                if _st['periodo'] == 'personalizado' and (_st['de'] or _st['ate']):
-                    periodo_label = f'{_st["de"] or "?"} → {_st["ate"] or "?"}'
+                    tipo_nome = dict(_TIPOS).get(tipo, tipo).replace(' ','_')
+                    mes_nome  = _MESES_PT.get(mes, mes)
+                    if tipo == 'balanco_ano':
+                        fname = f'Relatorio_{tipo_nome}_{ano}.docx'
+                    else:
+                        fname = f'Relatorio_{tipo_nome}_{mes_nome}_{ano}.docx'
+                    fname = fname.replace(' ','_').replace('.','_').replace('___','_') + '.docx'
+                    fname = fname.replace('.docx.docx', '.docx')
 
-                cp = load_contas_pagar()   if _st.get('inc_pagar',   True) else []
-                cr = load_contas_receber() if _st.get('inc_receber',  True) else []
+                    await ui.run_javascript(
+                        f'(function(){{'
+                        f'var a=document.createElement("a");'
+                        f'a.href="data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,{b64}";'
+                        f'a.download="{fname}";'
+                        f'document.body.appendChild(a);a.click();document.body.removeChild(a);'
+                        f'}})()'
+                    )
+                    ui.notify('Relatório gerado com sucesso!', color='positive', icon='check_circle')
+                    dlg.close()
+                except Exception as ex:
+                    ui.notify(f'Erro ao gerar relatório: {ex}', color='negative')
+                finally:
+                    if btn:
+                        btn.props('loading=false disabled=false')
 
-                html = _build_report_html(entries, cfg, periodo_label,
-                                          contas_pagar=cp, contas_receber=cr)
-                html_b64 = base64.b64encode(html.encode('utf-8')).decode()
-                await ui.run_javascript(f'''
-                    const w = window.open('', '_blank', 'width=1060,height=760,noopener,noreferrer');
-                    const html = atob('{html_b64}');
-                    w.document.open();
-                    w.document.write(html);
-                    w.document.close();
-                ''')
-
-            ui.button('Gerar Relatório', icon='bar_chart', on_click=_gerar).props(
+            btn = ui.button('Gerar Word', icon='description', on_click=_gerar).props(
                 'unelevated no-caps'
-            ).classes('dmc-btn dmc-btn-primary')
+            ).classes('dmc-btn dmc-btn-primary').style(
+                'background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.35);color:#60A5FA'
+            )
+            _gerar_btn_ref['btn'] = btn
 
     dlg.open()
 
@@ -1980,8 +2396,13 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
                 with ui.element('div'):
                     ui.html('<label class="dmc-label">Valor (R$) *</label>')
                     _iids['valor'] = _inp_id('val')
-                    vval = str(_st.get('valor','') or '')
-                    ui.html(f'<input id="{_iids["valor"]}" class="dmc-input" type="number" step="0.01" min="0" placeholder="0,00" value="{vval}">')
+                    try:
+                        _vf = float(_st.get('valor') or 0)
+                        _s  = f'{_vf:,.2f}'.replace(',','X').replace('.', ',').replace('X','.')
+                        vval = f'R$ {_s}'
+                    except (ValueError, TypeError):
+                        vval = 'R$ 0,00'
+                    ui.html(f'<input id="{_iids["valor"]}" class="dmc-input" type="text" inputmode="numeric" value="{vval}">')
                 with ui.element('div'):
                     ui.html('<label class="dmc-label">Vencimento</label>')
                     _iids['data_venc'] = _inp_id('venc')
@@ -2003,8 +2424,11 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
                 f'{cat_opts_html}</select>'
             )
             # caixa inline para criar categoria nova (oculta por padrão)
-            _cor_opts = ''.join(
-                f'<option value="{c}">{c}</option>'
+            _cor_dots_html = ''.join(
+                f'<button type="button" data-cor="{c}" title="{c}" '
+                f'style="width:20px;height:20px;border-radius:50%;background:{c};'
+                f'border:2px solid transparent;cursor:pointer;outline:none;flex-shrink:0;'
+                f'transition:box-shadow .15s,border-color .15s;padding:0"></button>'
                 for c in _CAT_COLORS
             )
             ui.html(
@@ -2014,9 +2438,10 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
                 f'<span class="material-icons" style="font-size:15px;color:#FBBF24;flex-shrink:0">label</span>'
                 f'<input id="{_new_cat_nome_id}" class="dmc-input" placeholder="Nome da categoria" '
                 f'style="flex:1;margin-bottom:0">'
-                f'<select id="{_new_cat_cor_id}" class="dmc-input" '
-                f'style="width:90px;margin-bottom:0;cursor:pointer;font-size:11px">'
-                f'{_cor_opts}</select>'
+                f'<input type="hidden" id="{_new_cat_cor_id}" value="{_CAT_COLORS[0]}">'
+                f'<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;flex-shrink:0">'
+                f'{_cor_dots_html}'
+                f'</div>'
                 f'</div>'
             )
 
@@ -2034,6 +2459,18 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
                     f'if(n)n.focus();'
                     f'}}'
                     f'}});'
+                    f'var vi=document.getElementById("{_iids["valor"]}");'
+                    f'if(vi)vi.oninput=function(){{this.value=maskBRL(this.value);}};'
+                    f'var hidCor=document.getElementById("{_new_cat_cor_id}");'
+                    f'var dots=box.querySelectorAll("[data-cor]");'
+                    f'function selDot(d){{'
+                    f'dots.forEach(function(x){{x.style.borderColor="transparent";x.style.boxShadow="none";}});'
+                    f'd.style.borderColor="#fff";'
+                    f'd.style.boxShadow="0 0 0 3px "+d.getAttribute("data-cor")+"66";'
+                    f'if(hidCor)hidCor.value=d.getAttribute("data-cor");'
+                    f'}}'
+                    f'if(dots.length)selDot(dots[0]);'
+                    f'dots.forEach(function(d){{d.addEventListener("click",function(){{selDot(d);}});}});'
                     f'}})()'
                 )
             ui.timer(0.15, _setup_cat_toggle, once=True)
@@ -2086,7 +2523,9 @@ def nova_conta_pagar_dialog(conta: dict | None = None, on_save=None) -> None:
                     ui.notify('Informe a descrição', color='negative')
                     return
                 try:
-                    valor = float(str(vals.get('valor') or '0').replace(',','.'))
+                    _rv = str(vals.get('valor') or 'R$ 0,00')
+                    _rv = _rv.replace('R$','').replace(' ','').replace('.','').replace(',','.')
+                    valor = float(_rv or '0')
                 except ValueError:
                     valor = 0.0
 
@@ -2197,7 +2636,7 @@ def nova_conta_receber_dialog(on_save=None) -> None:
                 with ui.element('div'):
                     ui.html('<label class="dmc-label">Valor total (R$) *</label>')
                     _iids['valor_total'] = _iid('vt')
-                    ui.html(f'<input id="{_iids["valor_total"]}" class="dmc-input" type="number" step="0.01" min="0" placeholder="0,00">')
+                    ui.html(f'<input id="{_iids["valor_total"]}" class="dmc-input" type="text" inputmode="numeric" value="R$ 0,00">')
                 with ui.element('div'):
                     ui.html('<label class="dmc-label">Nº de parcelas</label>')
                     _iids['parcelas'] = _iid('parc')
@@ -2246,7 +2685,9 @@ def nova_conta_receber_dialog(on_save=None) -> None:
                     ui.notify('Informe a descrição', color='negative')
                     return
                 try:
-                    vt = float(str(vals.get('valor_total','0')).replace(',','.'))
+                    _rvt = str(vals.get('valor_total') or 'R$ 0,00')
+                    _rvt = _rvt.replace('R$','').replace(' ','').replace('.','').replace(',','.')
+                    vt = float(_rvt or '0')
                 except ValueError:
                     vt = 0.0
                 try:
@@ -2279,6 +2720,16 @@ def nova_conta_receber_dialog(on_save=None) -> None:
             ui.button('Salvar', icon='save', on_click=_salvar).props(
                 'unelevated no-caps'
             ).classes('dmc-btn dmc-btn-primary')
+
+    _vt_id = _iids['valor_total']
+    async def _setup_receber_masks():
+        await ui.run_javascript(
+            f'(function(){{'
+            f'var vi=document.getElementById("{_vt_id}");'
+            f'if(vi)vi.oninput=function(){{this.value=maskBRL(this.value);}};'
+            f'}})()'
+        )
+    ui.timer(0.15, _setup_receber_masks, once=True)
 
     dlg.open()
 
@@ -2451,5 +2902,138 @@ def registrar_pagamento_dialog(conta: dict, on_save=None, modo: str = "pagar") -
             'display:flex;justify-content:flex-end;flex-shrink:0'
         ):
             ui.button('Fechar', on_click=dlg.close).props('flat no-caps').classes('dmc-btn dmc-btn-ghost')
+
+    dlg.open()
+
+
+# ── Lixeira Financeira ────────────────────────────────────────────────────────
+
+def lixeira_financeiro_dialog(on_restore=None) -> None:
+    from services.financeiro import (
+        load_contas_pagar_deletadas, load_contas_receber_deletadas,
+        restore_conta_pagar, restore_conta_receber,
+        purge_conta_pagar, purge_conta_receber,
+    )
+
+    with ui.dialog() as dlg, ui.card().style(
+        "background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;"
+        "border-radius:18px!important;padding:0;"
+        "width:min(860px,97vw)!important;max-height:88vh;"
+        "display:flex;flex-direction:column;color:var(--dmc-text)!important;"
+    ):
+        with ui.element("div").style(
+            "padding:18px 24px;border-bottom:1px solid var(--dmc-b1);"
+            "display:flex;align-items:center;gap:14px;flex-shrink:0"
+        ):
+            ui.html(
+                '<div style="width:38px;height:38px;border-radius:10px;flex-shrink:0;'
+                'background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);'
+                'display:flex;align-items:center;justify-content:center;">'
+                '<span class="material-icons" style="font-size:20px;color:#F87171">delete_outline</span></div>'
+            )
+            with ui.element("div").style("flex:1"):
+                ui.html('<div style="font:700 15px var(--dmc-fd);color:var(--dmc-text)">Lixeira Financeira</div>')
+                ui.html(
+                    '<div style="font:11px var(--dmc-fm);color:var(--dmc-muted2);margin-top:2px">'
+                    'Contas excluídas — restaure ou exclua permanentemente</div>'
+                )
+            ui.button(icon="close", on_click=dlg.close).props("flat round dense").style(
+                "color:var(--dmc-muted)"
+            )
+
+        content_area = ui.element("div").style("padding:18px 24px;overflow-y:auto;flex:1")
+
+        def _brl(v):
+            return f"R$ {float(v or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+        def _render_lixeira():
+            content_area.clear()
+            pagar   = load_contas_pagar_deletadas()
+            receber = load_contas_receber_deletadas()
+            with content_area:
+                if not pagar and not receber:
+                    ui.html(
+                        '<div style="text-align:center;padding:60px 0;color:var(--dmc-muted2)">'
+                        '<span class="material-icons" style="font-size:52px;opacity:.2;'
+                        'display:block;margin-bottom:12px">delete_outline</span>'
+                        '<div style="font:13px var(--dmc-fm)">Nenhuma conta na lixeira</div>'
+                        '</div>'
+                    )
+                    return
+
+                for titulo, itens, is_pagar in [
+                    ("Contas a Pagar", pagar, True),
+                    ("Contas a Receber", receber, False),
+                ]:
+                    if not itens:
+                        continue
+                    ui.html(
+                        f'<div style="font:600 11px var(--dmc-mono);color:var(--dmc-muted2);'
+                        f'letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px">{titulo}</div>'
+                    )
+                    for c in itens:
+                        cid  = c["id"]
+                        desc = c.get("descricao", "—")
+                        val  = _brl(c.get("valor") or c.get("valor_total", 0))
+                        venc = c.get("data_venc", "—")
+                        del_em = c.get("deletado_em", "—")
+                        with ui.element("div").style(
+                            "background:var(--dmc-bg3);border:1px solid var(--dmc-b1);border-radius:10px;"
+                            "padding:10px 14px;margin-bottom:6px;"
+                            "display:flex;align-items:center;gap:12px"
+                        ):
+                            with ui.element("div").style("flex:1;min-width:0"):
+                                ui.html(
+                                    f'<div style="font:500 13px var(--dmc-fm);color:var(--dmc-text);'
+                                    f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{desc}</div>'
+                                    f'<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);margin-top:3px">'
+                                    f'{val} · Venc.: {venc} · Excluída: {del_em}</div>'
+                                )
+                            with ui.element("div").style("display:flex;gap:6px;flex-shrink:0"):
+                                rst = ui.element("button").classes("dmc-btn dmc-btn-secondary dmc-btn-sm")
+                                with rst:
+                                    ui.html(
+                                        '<span class="material-icons" style="font-size:13px">settings_backup_restore</span>'
+                                        "<span>Restaurar</span>"
+                                    )
+
+                                def _restore(cid=cid, ip=is_pagar):
+                                    if ip:
+                                        restore_conta_pagar(cid)
+                                    else:
+                                        restore_conta_receber(cid)
+                                    ui.notify("Conta restaurada.", type="positive")
+                                    if on_restore:
+                                        on_restore()
+                                    _render_lixeira()
+
+                                rst.on("click", _restore)
+
+                                prg = ui.element("button").classes("dmc-btn dmc-btn-danger dmc-btn-sm")
+                                with prg:
+                                    ui.html(
+                                        '<span class="material-icons" style="font-size:13px">delete_forever</span>'
+                                        "<span>Excluir</span>"
+                                    )
+
+                                def _purge(cid=cid, ip=is_pagar):
+                                    if ip:
+                                        purge_conta_pagar(cid)
+                                    else:
+                                        purge_conta_receber(cid)
+                                    ui.notify("Excluído permanentemente.", type="warning")
+                                    _render_lixeira()
+
+                                prg.on("click", _purge)
+
+                    ui.element("div").style("height:10px")
+
+        _render_lixeira()
+
+        with ui.element("div").style(
+            "padding:12px 24px;border-top:1px solid var(--dmc-b1);"
+            "display:flex;justify-content:flex-end;flex-shrink:0"
+        ):
+            ui.button("Fechar", on_click=dlg.close).props("flat no-caps").classes("dmc-btn dmc-btn-ghost")
 
     dlg.open()

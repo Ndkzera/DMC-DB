@@ -1289,7 +1289,11 @@ def cadastrar_cliente_dialog() -> None:
                     "obra_maps":   vals["end_maps"]   if obra_mesmo else vals["obra_maps"],
                     "data":        datetime.now().strftime("%d/%m/%Y %H:%M"),
                 }
-                add_cliente(cliente, usuario=current_user_label(), perfil=current_user_perfil())
+                try:
+                    add_cliente(cliente, usuario=current_user_label(), perfil=current_user_perfil())
+                except ValueError as _dup:
+                    ui.notify(str(_dup), type="warning")
+                    return
                 ui.notify(f"✓ Cliente '{vals['nome']}' cadastrado com sucesso!", type="positive")
                 dlg.close()
 

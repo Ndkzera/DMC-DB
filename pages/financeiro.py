@@ -205,6 +205,9 @@ def financeiro_page():
     if not is_authenticated():
         ui.navigate.to("/login")
         return
+    if not has_access(current_user_perfil(), "fi_ver"):
+        ui.navigate.to("/")
+        return
 
     ui.dark_mode().enable()
     ui.add_head_html(BOOTSTRAP_CDN)
@@ -232,6 +235,7 @@ def financeiro_page():
         relatorio_financeiro_dialog, empresa_dialog, certificado_dialog,
         nova_conta_pagar_dialog, nova_conta_receber_dialog,
         registrar_pagamento_dialog, categorias_pagar_dialog,
+        lixeira_financeiro_dialog,
     )
 
     cfg = load_config()
@@ -361,21 +365,28 @@ def financeiro_page():
         # ── Tab NFS-e ────────────────────────────────────────────────────
 
         def _render_nfse() -> None:
+            _pode_emitir = has_access(_fi_perfil, "fi_nfse_emitir")
+            _pode_config = has_access(_fi_perfil, "fi_nfse_configurar")
+            _pode_rel    = has_access(_fi_perfil, "fi_relatorio")
+
             with actions_box:
-                ui.button(
-                    "Emitir NFS-e", icon="add_circle",
-                    on_click=lambda: emitir_nfse_dialog(on_success=_refresh),
-                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary")
+                if _pode_emitir:
+                    ui.button(
+                        "Emitir NFS-e", icon="add_circle",
+                        on_click=lambda: emitir_nfse_dialog(on_success=_refresh),
+                    ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary")
 
-                ui.button(
-                    "Configurar", icon="settings",
-                    on_click=lambda: config_nfse_dialog(on_save=_refresh_cfg),
-                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
+                if _pode_config:
+                    ui.button(
+                        "Configurar", icon="settings",
+                        on_click=lambda: config_nfse_dialog(on_save=_refresh_cfg),
+                    ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
 
-                ui.button(
-                    "Relatório", icon="bar_chart",
-                    on_click=lambda: relatorio_financeiro_dialog(),
-                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
+                if _pode_rel:
+                    ui.button(
+                        "Relatório", icon="bar_chart",
+                        on_click=lambda: relatorio_financeiro_dialog(),
+                    ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
 
                 ui.button(
                     "Atualizar", icon="refresh", on_click=_refresh,
@@ -443,6 +454,11 @@ def financeiro_page():
                     else:
                         st_html = '<span style="color:#4ADE80;font:600 10px var(--dmc-mono)">EMITIDA</span>'
 
+                    xml_btn = (
+                        f'<button class="fi-act-btn" title="XML" '
+                        f'data-action="fi_dl_xml" data-id="{chave}"'
+                        f'><span class="material-icons" style="font-size:15px">download</span></button>'
+                    ) if e.get("nfse_xml") else ""
                     rows_html += (
                         f'<tr data-nfse-key="{chave}">'
                         f'<td><span class="fi-num">#{num}</span></td>'
@@ -455,9 +471,9 @@ def financeiro_page():
                         f'<td><span class="fi-ts">{emitido}</span></td>'
                         f'<td><div style="display:flex;gap:4px">'
                         f'<button class="fi-act-btn" title="Ver" '
-                        f'onclick="emitEvent(\'fi_ver\',{{key:\"{chave}\"}})">'
-                        f'<span class="material-icons" style="font-size:15px">visibility</span></button>'
-                        f'{"" if not e.get("nfse_xml") else f"""<button class="fi-act-btn" title="XML" onclick="emitEvent(\'fi_dl_xml\',{{key:\"{chave}\"}})"><span class="material-icons" style="font-size:15px">download</span></button>"""}'
+                        f'data-action="fi_ver" data-id="{chave}"'
+                        f'><span class="material-icons" style="font-size:15px">visibility</span></button>'
+                        f'{xml_btn}'
                         f'</div></td></tr>'
                     )
 
@@ -472,54 +488,49 @@ def financeiro_page():
                         '<th style="width:80px">Ações</th>'
                         f'</tr></thead><tbody>{rows_html}</tbody></table>'
                     )
-
-                def _on_ver(e):
-                    key = e.args.get("key","")
-                    for entry in list_nfse():
-                        k = entry.get("chave_acesso") or entry.get("id","")
-                        if k == key:
-                            ver_nfse_dialog(entry)
-                            break
-
-                def _on_dl_xml(e):
-                    key = e.args.get("key","")
-                    for entry in list_nfse():
-                        k = entry.get("chave_acesso") or entry.get("id","")
-                        if k == key and entry.get("nfse_xml"):
-                            xml_b64 = base64.b64encode(entry["nfse_xml"].encode()).decode()
-                            fname   = f'NFSe_{entry.get("numero", key)}.xml'
-                            ui.run_javascript(f'''
-                                const a = document.createElement('a');
-                                a.href = 'data:application/xml;base64,{xml_b64}';
-                                a.download = '{fname}';
-                                document.body.appendChild(a); a.click();
-                                document.body.removeChild(a);
-                            ''')
-                            break
-
-                ui.on("fi_ver",    _on_ver)
-                ui.on("fi_dl_xml", _on_dl_xml)
+                async def _wire_nfse_btns():
+                    await ui.run_javascript(
+                        '(function(){'
+                        'document.querySelectorAll(".fi-act-btn[data-action]").forEach(function(b){'
+                        'b.onclick=function(){emitEvent(b.getAttribute("data-action"),{id:b.getAttribute("data-id")});};'
+                        '});'
+                        '})()'
+                    )
+                ui.timer(0.15, _wire_nfse_btns, once=True)
 
         # ── Tab Contas a Pagar ────────────────────────────────────────────
 
         def _render_pagar() -> None:
+            _pode_criar   = has_access(_fi_perfil, "fi_pagar_criar")
+            _pode_editar  = has_access(_fi_perfil, "fi_pagar_editar")
+            _pode_deletar = has_access(_fi_perfil, "fi_pagar_deletar")
+            _pode_cat     = has_access(_fi_perfil, "fi_pagar_categorias")
+            _pode_rel     = has_access(_fi_perfil, "fi_relatorio")
+
             contas = load_contas_pagar()
             res    = resumo_pagar()
 
             with actions_box:
+                if _pode_criar:
+                    ui.button(
+                        "Nova Conta", icon="add_circle",
+                        on_click=lambda: nova_conta_pagar_dialog(on_save=_refresh),
+                    ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary").style(
+                        "background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.35);color:#F87171"
+                    )
+                if _pode_cat:
+                    ui.button(
+                        "Categorias", icon="label",
+                        on_click=lambda: categorias_pagar_dialog(on_save=_refresh),
+                    ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
+                if _pode_rel:
+                    ui.button(
+                        "Relatório", icon="bar_chart",
+                        on_click=lambda: relatorio_financeiro_dialog(),
+                    ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
                 ui.button(
-                    "Nova Conta", icon="add_circle",
-                    on_click=lambda: nova_conta_pagar_dialog(on_save=_refresh),
-                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary").style(
-                    "background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.35);color:#F87171"
-                )
-                ui.button(
-                    "Categorias", icon="label",
-                    on_click=lambda: categorias_pagar_dialog(on_save=_refresh),
-                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
-                ui.button(
-                    "Relatório", icon="bar_chart",
-                    on_click=lambda: relatorio_financeiro_dialog(),
+                    "Lixeira", icon="delete_outline",
+                    on_click=lambda: lixeira_financeiro_dialog(on_restore=_refresh),
                 ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
                 ui.button(
                     icon="refresh", on_click=_refresh,
@@ -556,6 +567,23 @@ def financeiro_page():
                     venc   = c.get("data_venc") or "—"
                     pag    = c.get("data_pag") or "—"
                     cid    = c["id"]
+                    _btn_pagar = (
+                        f'<button class="fi-act-btn" title="Marcar como pago" '
+                        f'style="color:#4ADE80;border-color:rgba(74,222,128,.3)" '
+                        f'data-action="fi_pagar" data-id="{cid}"'
+                        f'><span class="material-icons" style="font-size:14px">check_circle</span></button>'
+                    ) if _pode_editar and st != "pago" else ""
+                    _btn_editar = (
+                        f'<button class="fi-act-btn" title="Editar" '
+                        f'data-action="fi_edit_pagar" data-id="{cid}"'
+                        f'><span class="material-icons" style="font-size:14px">edit</span></button>'
+                    ) if _pode_editar else ""
+                    _btn_deletar = (
+                        f'<button class="fi-act-btn" title="Excluir" '
+                        f'style="color:#F87171;border-color:rgba(248,113,113,.2)" '
+                        f'data-action="fi_del_pagar" data-id="{cid}"'
+                        f'><span class="material-icons" style="font-size:14px">delete</span></button>'
+                    ) if _pode_deletar else ""
                     rows_html += (
                         f'<tr>'
                         f'<td><span class="fi-toma">{c.get("descricao","—")}</span></td>'
@@ -568,11 +596,7 @@ def financeiro_page():
                         f'<td><span class="fi-ts">{pag}</span></td>'
                         f'<td>{badge}</td>'
                         f'<td><div style="display:flex;gap:4px">'
-                        f'{"" if st == "pago" else f"""<button class="fi-act-btn" title="Marcar como pago" style="color:#4ADE80;border-color:rgba(74,222,128,.3)" onclick="emitEvent(\'fi_pagar\',{{id:\"{cid}\"}})" ><span class="material-icons" style="font-size:14px">check_circle</span></button>"""}'
-                        f'<button class="fi-act-btn" title="Editar" onclick="emitEvent(\'fi_edit_pagar\',{{id:\"{cid}\"}})">'
-                        f'<span class="material-icons" style="font-size:14px">edit</span></button>'
-                        f'<button class="fi-act-btn" title="Excluir" style="color:#F87171;border-color:rgba(248,113,113,.2)" onclick="emitEvent(\'fi_del_pagar\',{{id:\"{cid}\"}})">'
-                        f'<span class="material-icons" style="font-size:14px">delete</span></button>'
+                        f'{_btn_pagar}{_btn_editar}{_btn_deletar}'
                         f'</div></td></tr>'
                     )
 
@@ -589,41 +613,42 @@ def financeiro_page():
                         '<th style="width:100px">Ações</th>'
                         f'</tr></thead><tbody>{rows_html}</tbody></table>'
                     )
+                async def _wire_pagar_btns():
+                    await ui.run_javascript(
+                        '(function(){'
+                        'document.querySelectorAll(".fi-act-btn[data-action]").forEach(function(b){'
+                        'b.onclick=function(){emitEvent(b.getAttribute("data-action"),{id:b.getAttribute("data-id")});};'
+                        '});'
+                        '})()'
+                    )
+                ui.timer(0.15, _wire_pagar_btns, once=True)
 
-                def _on_pagar(e):
-                    from services.financeiro import pagar_conta
-                    pagar_conta(e.args.get("id",""))
-                    _refresh()
-
-                def _on_del_pagar(e):
-                    from services.financeiro import delete_conta_pagar
-                    delete_conta_pagar(e.args.get("id",""))
-                    _refresh()
-
-                def _on_edit_pagar(e):
-                    cid = e.args.get("id","")
-                    conta = next((c for c in contas if c["id"] == cid), None)
-                    if conta:
-                        nova_conta_pagar_dialog(conta=conta, on_save=_refresh)
-
-                ui.on("fi_pagar",      _on_pagar)
-                ui.on("fi_del_pagar",  _on_del_pagar)
-                ui.on("fi_edit_pagar", _on_edit_pagar)
 
         # ── Tab Contas a Receber ──────────────────────────────────────────
 
         def _render_receber() -> None:
+            _pode_criar   = has_access(_fi_perfil, "fi_receber_criar")
+            _pode_pagar   = has_access(_fi_perfil, "fi_receber_pagar")
+            _pode_deletar = has_access(_fi_perfil, "fi_receber_deletar")
+            _pode_rel     = has_access(_fi_perfil, "fi_relatorio")
+
             contas = load_contas_receber()
             res    = resumo_receber()
 
             with actions_box:
+                if _pode_criar:
+                    ui.button(
+                        "Nova Conta", icon="add_circle",
+                        on_click=lambda: nova_conta_receber_dialog(on_save=_refresh),
+                    ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary")
+                if _pode_rel:
+                    ui.button(
+                        "Relatório", icon="bar_chart",
+                        on_click=lambda: relatorio_financeiro_dialog(),
+                    ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
                 ui.button(
-                    "Nova Conta", icon="add_circle",
-                    on_click=lambda: nova_conta_receber_dialog(on_save=_refresh),
-                ).props("unelevated no-caps").classes("dmc-btn dmc-btn-primary")
-                ui.button(
-                    "Relatório", icon="bar_chart",
-                    on_click=lambda: relatorio_financeiro_dialog(),
+                    "Lixeira", icon="delete_outline",
+                    on_click=lambda: lixeira_financeiro_dialog(on_restore=_refresh),
                 ).props("unelevated no-caps").classes("dmc-btn dmc-btn-secondary")
                 ui.button(
                     icon="refresh", on_click=_refresh,
@@ -671,6 +696,23 @@ def financeiro_page():
                         f'{_fmt_brl(vp)} / {_fmt_brl(vt)}</span>'
                     )
 
+                    _btn_pag = (
+                        f'<button class="fi-act-btn" title="Registrar pagamento" '
+                        f'style="color:#4ADE80;border-color:rgba(74,222,128,.3)" '
+                        f'data-action="fi_pag_receber" data-id="{cid}"'
+                        f'><span class="material-icons" style="font-size:14px">payments</span></button>'
+                    ) if _pode_pagar else ""
+                    _btn_ver = (
+                        f'<button class="fi-act-btn" title="Ver parcelas" '
+                        f'data-action="fi_ver_receber" data-id="{cid}"'
+                        f'><span class="material-icons" style="font-size:14px">list</span></button>'
+                    )
+                    _btn_del = (
+                        f'<button class="fi-act-btn" title="Excluir" '
+                        f'style="color:#F87171;border-color:rgba(248,113,113,.2)" '
+                        f'data-action="fi_del_receber" data-id="{cid}"'
+                        f'><span class="material-icons" style="font-size:14px">delete</span></button>'
+                    ) if _pode_deletar else ""
                     rows_html += (
                         f'<tr>'
                         f'<td><span class="fi-toma">{c.get("descricao","—")}</span></td>'
@@ -684,12 +726,7 @@ def financeiro_page():
                         f'<td><span class="fi-ts">{venc}</span></td>'
                         f'<td>{badge}</td>'
                         f'<td><div style="display:flex;gap:4px">'
-                        f'<button class="fi-act-btn" title="Registrar pagamento" style="color:#4ADE80;border-color:rgba(74,222,128,.3)" onclick="emitEvent(\'fi_pag_receber\',{{id:\"{cid}\"}})">'
-                        f'<span class="material-icons" style="font-size:14px">payments</span></button>'
-                        f'<button class="fi-act-btn" title="Ver parcelas" onclick="emitEvent(\'fi_ver_receber\',{{id:\"{cid}\"}})">'
-                        f'<span class="material-icons" style="font-size:14px">list</span></button>'
-                        f'<button class="fi-act-btn" title="Excluir" style="color:#F87171;border-color:rgba(248,113,113,.2)" onclick="emitEvent(\'fi_del_receber\',{{id:\"{cid}\"}})">'
-                        f'<span class="material-icons" style="font-size:14px">delete</span></button>'
+                        f'{_btn_pag}{_btn_ver}{_btn_del}'
                         f'</div></td></tr>'
                     )
 
@@ -706,26 +743,82 @@ def financeiro_page():
                         '<th style="width:110px">Ações</th>'
                         f'</tr></thead><tbody>{rows_html}</tbody></table>'
                     )
+                async def _wire_receber_btns():
+                    await ui.run_javascript(
+                        '(function(){'
+                        'document.querySelectorAll(".fi-act-btn[data-action]").forEach(function(b){'
+                        'b.onclick=function(){emitEvent(b.getAttribute("data-action"),{id:b.getAttribute("data-id")});};'
+                        '});'
+                        '})()'
+                    )
+                ui.timer(0.15, _wire_receber_btns, once=True)
 
-                def _on_pag_receber(e):
-                    cid   = e.args.get("id","")
-                    conta = next((c for c in contas if c["id"] == cid), None)
-                    if conta:
-                        registrar_pagamento_dialog(conta=conta, on_save=_refresh)
+        # ── Handlers de eventos (registrados uma vez, ao nível da página) ──
 
-                def _on_ver_receber(e):
-                    cid   = e.args.get("id","")
-                    conta = next((c for c in contas if c["id"] == cid), None)
-                    if conta:
-                        registrar_pagamento_dialog(conta=conta, on_save=_refresh, modo="ver")
+        def _on_nfse_ver(e):
+            key = e.args.get("id","")
+            for entry in list_nfse():
+                k = entry.get("chave_acesso") or entry.get("id","")
+                if k == key:
+                    ver_nfse_dialog(entry)
+                    break
 
-                def _on_del_receber(e):
-                    from services.financeiro import delete_conta_receber
-                    delete_conta_receber(e.args.get("id",""))
-                    _refresh()
+        def _on_nfse_dl_xml(e):
+            key = e.args.get("id","")
+            for entry in list_nfse():
+                k = entry.get("chave_acesso") or entry.get("id","")
+                if k == key and entry.get("nfse_xml"):
+                    xml_b64 = base64.b64encode(entry["nfse_xml"].encode()).decode()
+                    fname   = f'NFSe_{entry.get("numero", key)}.xml'
+                    ui.run_javascript(f'''
+                        const a = document.createElement('a');
+                        a.href = 'data:application/xml;base64,{xml_b64}';
+                        a.download = '{fname}';
+                        document.body.appendChild(a); a.click();
+                        document.body.removeChild(a);
+                    ''')
+                    break
 
-                ui.on("fi_pag_receber", _on_pag_receber)
-                ui.on("fi_ver_receber", _on_ver_receber)
-                ui.on("fi_del_receber", _on_del_receber)
+        def _on_pagar(e):
+            from services.financeiro import pagar_conta
+            pagar_conta(e.args.get("id",""))
+            _refresh()
+
+        def _on_del_pagar(e):
+            from services.financeiro import delete_conta_pagar
+            delete_conta_pagar(e.args.get("id",""))
+            _refresh()
+
+        def _on_edit_pagar(e):
+            cid = e.args.get("id","")
+            conta = next((c for c in load_contas_pagar() if c["id"] == cid), None)
+            if conta:
+                nova_conta_pagar_dialog(conta=conta, on_save=_refresh)
+
+        def _on_pag_receber(e):
+            cid   = e.args.get("id","")
+            conta = next((c for c in load_contas_receber() if c["id"] == cid), None)
+            if conta:
+                registrar_pagamento_dialog(conta=conta, on_save=_refresh)
+
+        def _on_ver_receber(e):
+            cid   = e.args.get("id","")
+            conta = next((c for c in load_contas_receber() if c["id"] == cid), None)
+            if conta:
+                registrar_pagamento_dialog(conta=conta, on_save=_refresh, modo="ver")
+
+        def _on_del_receber(e):
+            from services.financeiro import delete_conta_receber
+            delete_conta_receber(e.args.get("id",""))
+            _refresh()
+
+        ui.on("fi_ver",         _on_nfse_ver)
+        ui.on("fi_dl_xml",      _on_nfse_dl_xml)
+        ui.on("fi_pagar",       _on_pagar)
+        ui.on("fi_del_pagar",   _on_del_pagar)
+        ui.on("fi_edit_pagar",  _on_edit_pagar)
+        ui.on("fi_pag_receber", _on_pag_receber)
+        ui.on("fi_ver_receber", _on_ver_receber)
+        ui.on("fi_del_receber", _on_del_receber)
 
         _refresh()

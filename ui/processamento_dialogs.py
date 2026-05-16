@@ -3493,3 +3493,441 @@ def gerador_kml_dialog() -> None:
         ui.on('kmlg_fuso_click', lambda e: _set_kml_fuso(int(e.args.get('zone', _FUSO_DEFAULT))))
 
     dlg.open()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GERADOR DE POLÍGONO SHAPEFILE  (UTM → SHP, datum + fuso selecionáveis)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def poligono_shapefile_dialog() -> None:
+    """Converte coordenadas UTM (qualquer datum/fuso) para polígono Shapefile."""
+    from services.kml_shp import make_shapefile_zip
+
+    _st: dict = {
+        'datum': 'SIRGAS2000',
+        'fuso':  _FUSO_DEFAULT,
+        'pontos': [],        # lista de (norte, leste, nome)
+        'nome_arq': '',
+        'cliente': None,
+    }
+
+    _DATUMS = [
+        ('SIRGAS2000',    '#4ADE80', '74,222,128',  'GRS80',       'EPSG:4674'),
+        ('SAD69',         '#FBBF24', '251,191,36',  'GRS80',       'EPSG:4291'),
+        ('WGS84',         '#60A5FA', '96,165,250',  'GRS80',       'EPSG:4326'),
+        ('Córrego Alegre','#F87171', '248,113,113', 'International','EPSG:4225'),
+    ]
+
+    def _datum_cards_html(sel: str) -> str:
+        items = ''
+        for name, color, rgb, ellip, epsg in _DATUMS:
+            a  = name == sel
+            bc = color if a else 'rgba(255,255,255,.07)'
+            bg = f'rgba({rgb},.08)' if a else 'var(--dmc-bg3)'
+            fw = '700' if a else '500'
+            tc = color if a else 'var(--dmc-muted2)'
+            items += (
+                f'<div data-shpdatum="{name}" style="flex:1;cursor:pointer;'
+                f'background:{bg};border:1.5px solid {bc};border-radius:10px;'
+                f'padding:8px 12px;text-align:center;min-width:100px;transition:all .15s">'
+                f'<div style="font:{fw} 12px var(--dmc-mono);color:{tc}">{name}</div>'
+                f'<div style="font:9px var(--dmc-mono);color:var(--dmc-muted2);margin-top:2px">'
+                f'{ellip}</div>'
+                f'<div style="font:9px var(--dmc-mono);color:var(--dmc-muted2)">{epsg}</div>'
+                f'</div>'
+            )
+        return '<div style="display:flex;gap:8px;flex-wrap:wrap" id="shpg-datum-row">' + items + '</div>'
+
+    def _fuso_shp_html(sel: int) -> str:
+        items = ''
+        for zone, mc, uf in _BR_FUSOS:
+            a  = zone == sel
+            bc = '#A78BFA' if a else 'rgba(255,255,255,.07)'
+            tc = '#A78BFA' if a else 'var(--dmc-muted2)'
+            bg = 'rgba(167,139,250,.08)' if a else 'var(--dmc-bg3)'
+            fw = '700' if a else '500'
+            items += (
+                f'<div data-shpzone="{zone}" style="flex:0 0 auto;cursor:pointer;'
+                f'background:{bg};border:1.5px solid {bc};border-radius:10px;'
+                f'padding:8px 14px;text-align:center;min-width:68px;transition:all .15s">'
+                f'<div style="font:{fw} 13px var(--dmc-mono);color:{tc}">{zone}S</div>'
+                f'<div style="font:10px var(--dmc-mono);color:{tc};margin-top:1px">{mc}°</div>'
+                f'<div style="font:9px var(--dmc-fm);color:var(--dmc-muted2);margin-top:3px;'
+                f'white-space:nowrap;overflow:hidden;max-width:72px;text-overflow:ellipsis">{uf}</div>'
+                f'</div>'
+            )
+        return (
+            '<div style="display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px"'
+            ' id="shpg-fuso-row">' + items + '</div>'
+        )
+
+    with ui.dialog() as dlg, ui.card().style(
+        'background:var(--dmc-bg2)!important;border:1px solid var(--dmc-b2)!important;'
+        'border-radius:18px!important;padding:0;'
+        'width:min(820px,97vw)!important;height:94vh;max-height:94vh;'
+        'display:flex;flex-direction:column;color:var(--dmc-text)!important;position:relative;'
+    ):
+        ui.button(icon='close', on_click=dlg.close).props('flat round dense').style(
+            'color:var(--dmc-muted);position:absolute;top:12px;right:12px;z-index:10;'
+        )
+
+        # ── Cabeçalho ──────────────────────────────────────────────────────────
+        with ui.element('div').style(
+            'padding:18px 24px;border-bottom:1px solid var(--dmc-b1);'
+            'display:flex;align-items:center;gap:14px;flex-shrink:0;padding-right:52px;'
+        ):
+            ui.html(
+                '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;'
+                'background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);'
+                'display:flex;align-items:center;justify-content:center;">'
+                '<span class="material-icons" style="font-size:20px;color:#A78BFA">polyline</span></div>'
+            )
+            with ui.element('div'):
+                ui.html(
+                    '<div style="font:700 16px var(--dmc-fd);color:var(--dmc-text)">'
+                    'Polígono → Shapefile</div>'
+                )
+                ui.html(
+                    '<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2);margin-top:1px">'
+                    'Coordenadas UTM → .shp com datum e fuso selecionados</div>'
+                )
+
+        # ── Corpo ──────────────────────────────────────────────────────────────
+        with ui.element('div').style('padding:20px 24px;overflow-y:auto;flex:1;min-height:0'):
+
+            # Nome do arquivo
+            ui.html(
+                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                'letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">'
+                'Nome do Arquivo</div>'
+            )
+            with ui.element('div').style(
+                'display:flex;align-items:stretch;height:40px;'
+                'border:1px solid var(--dmc-b2);border-radius:8px;'
+                'background:var(--dmc-bg);margin-bottom:6px;overflow:hidden;'
+            ):
+                ui.html(
+                    '<span style="padding:0 14px;display:flex;align-items:center;'
+                    'font:700 13px var(--dmc-mono);color:var(--dmc-text);'
+                    'white-space:nowrap;background:var(--dmc-bg3);'
+                    'border-right:1px solid var(--dmc-b1)">SHP</span>'
+                ).style('display:flex;align-self:stretch;flex-shrink:0')
+                ui.input(
+                    placeholder=' ',
+                    on_change=lambda e: _st.update({'nome_arq': e.value or ''}),
+                ).props('borderless dense').style('flex:1;min-width:0;padding-left:8px')
+            ui.html(
+                '<div style="font:11px var(--dmc-fm);color:var(--dmc-muted2);margin-bottom:16px">'
+                'Download como <b>SHP_&lt;nome&gt;.zip</b></div>'
+            )
+
+            # Cliente
+            ui.html(
+                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                'letter-spacing:.14em;text-transform:uppercase;'
+                'border-top:1px solid var(--dmc-b1);padding-top:14px;margin-bottom:10px">'
+                'Vincular Cliente '
+                '<span style="font-weight:400;text-transform:none;letter-spacing:0">'
+                '(opcional)</span></div>'
+            )
+            _build_cliente_selector(_st)
+
+            ui.html('<div style="border-top:1px solid var(--dmc-b1);margin:16px 0 14px"></div>')
+
+            # Datum
+            ui.html(
+                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                'letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">'
+                'Datum</div>'
+            )
+            datum_area = ui.element('div').style('margin-bottom:16px')
+            with datum_area:
+                ui.html(_datum_cards_html(_st['datum']))
+
+            def _set_datum(d: str) -> None:
+                _st['datum'] = d
+                datum_area.clear()
+                with datum_area:
+                    ui.html(_datum_cards_html(d))
+
+            # Fuso
+            ui.html(
+                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                'letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">'
+                'Fuso UTM — Hemisfério Sul</div>'
+            )
+            fuso_area = ui.element('div').style('margin-bottom:6px')
+            with fuso_area:
+                ui.html(_fuso_shp_html(_st['fuso']))
+
+            fuso_info = ui.html(
+                f'<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);margin-bottom:14px">'
+                f'Fuso <b style="color:#A78BFA">{_st["fuso"]}S</b> · '
+                f'MC = {6*_st["fuso"]-183}°</div>'
+            )
+
+            def _set_fuso_shp(z: int) -> None:
+                _st['fuso'] = z
+                fuso_area.clear()
+                with fuso_area:
+                    ui.html(_fuso_shp_html(z))
+                fuso_info.set_content(
+                    f'<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);margin-bottom:14px">'
+                    f'Fuso <b style="color:#A78BFA">{z}S</b> · '
+                    f'MC = {6*z-183}°</div>'
+                )
+                _st['pontos'] = []
+                preview_area.clear()
+
+            ui.html('<div style="border-top:1px solid var(--dmc-b1);margin:4px 0 14px"></div>')
+
+            # Coordenadas
+            ui.html(
+                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);'
+                'letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px">'
+                'Coordenadas UTM</div>'
+            )
+            ui.html(
+                '<div style="font:11px var(--dmc-mono);color:var(--dmc-muted2);margin-bottom:8px">'
+                'Uma linha por vértice: <b>PONTO &nbsp; NORTE &nbsp; LESTE</b>'
+                '<span style="color:var(--dmc-muted2);margin-left:12px">separados por tab, ; ou espaço</span>'
+                '</div>'
+            )
+            ui.html(
+                '<textarea id="shpg-coords" rows="10" '
+                r'placeholder="VT-01&#9;7045234.123&#9;724567.891&#10;VT-02&#9;7045230.456&#9;724571.234&#10;'
+                r'VT-03&#9;7045225.789&#9;724560.123&#10;VT-04&#9;7045231.000&#9;724555.789" '
+                'style="width:100%;box-sizing:border-box;resize:vertical;'
+                'font:12px var(--dmc-mono);color:var(--dmc-text);'
+                'background:var(--dmc-bg3);border:1px solid var(--dmc-b1);'
+                'border-radius:8px;padding:10px 12px;outline:none;min-height:160px;"></textarea>'
+            )
+
+            # Botão pré-visualizar + área de preview
+            with ui.element('div').style(
+                'display:flex;justify-content:center;margin-top:10px;margin-bottom:12px'
+            ):
+                async def _preview():
+                    text = await ui.run_javascript(
+                        "document.getElementById('shpg-coords')?.value || ''"
+                    )
+                    pts = _parse_coords_shp(text)
+                    _st['pontos'] = pts
+                    preview_area.clear()
+                    if not pts:
+                        with preview_area:
+                            ui.html(
+                                '<div style="font:12px var(--dmc-fm);color:#F87171;'
+                                'margin-top:8px">Nenhum vértice reconhecido. Verifique o formato.</div>'
+                            )
+                        return
+                    # Preview table
+                    datum = _st['datum']
+                    fuso  = _st['fuso']
+                    ellip = _DATUM_CFG.get(datum, _DATUM_CFG['SIRGAS2000'])['ellip']
+                    rows_html = ''
+                    for i, (norte, leste, nome) in enumerate(pts[:50]):
+                        try:
+                            if _PYPROJ:
+                                import pyproj as _pj
+                                _dcfg = _DATUM_CFG[datum]
+                                _ellps = 'GRS80' if _dcfg['ellip'] == 'GRS80' else 'intl'
+                                src = _pj.CRS.from_proj4(
+                                    f'+proj=utm +zone={fuso} +south +ellps={_ellps} +units=m +no_defs'
+                                )
+                                dst = _pj.CRS.from_epsg(_dcfg['epsg_geo'])
+                                t   = _pj.Transformer.from_crs(src, dst, always_xy=True)
+                                lon, lat = t.transform(leste, norte)
+                            else:
+                                lat, lon = _utm_to_geo_any(norte, leste, fuso, ellip)
+                            lat_s = f'{lat:.6f}'
+                            lon_s = f'{lon:.6f}'
+                        except Exception:
+                            lat_s = lon_s = '—'
+                        rows_html += (
+                            f'<tr style="border-bottom:1px solid var(--dmc-b1)">'
+                            f'<td style="padding:5px 10px;font:11px var(--dmc-mono);'
+                            f'color:var(--dmc-muted2)">{i+1}</td>'
+                            f'<td style="padding:5px 10px;font:11px var(--dmc-mono);'
+                            f'color:var(--dmc-text)">{nome}</td>'
+                            f'<td style="padding:5px 10px;font:11px var(--dmc-mono);'
+                            f'color:var(--dmc-muted)">{norte:.3f}</td>'
+                            f'<td style="padding:5px 10px;font:11px var(--dmc-mono);'
+                            f'color:var(--dmc-muted)">{leste:.3f}</td>'
+                            f'<td style="padding:5px 10px;font:11px var(--dmc-mono);'
+                            f'color:#4ADE80">{lat_s}</td>'
+                            f'<td style="padding:5px 10px;font:11px var(--dmc-mono);'
+                            f'color:#4ADE80">{lon_s}</td>'
+                            f'</tr>'
+                        )
+                    suffix = f' <span style="color:var(--dmc-muted2)">(mostrando 50)</span>' if len(pts) > 50 else ''
+                    with preview_area:
+                        ui.html(
+                            f'<div style="font:11px var(--dmc-mono);color:#A78BFA;margin-bottom:8px">'
+                            f'✓ {len(pts)} vértice(s) reconhecido(s){suffix}</div>'
+                        )
+                        ui.html(
+                            '<div style="overflow-x:auto;border:1px solid var(--dmc-b1);'
+                            'border-radius:8px;background:var(--dmc-bg3)">'
+                            '<table style="border-collapse:collapse;width:100%;min-width:560px">'
+                            '<thead><tr style="border-bottom:1px solid var(--dmc-b1)">'
+                            '<th style="padding:6px 10px;font:600 9px var(--dmc-mono);'
+                            'color:var(--dmc-muted2);text-align:left">#</th>'
+                            '<th style="padding:6px 10px;font:600 9px var(--dmc-mono);'
+                            'color:var(--dmc-muted2);text-align:left">PONTO</th>'
+                            '<th style="padding:6px 10px;font:600 9px var(--dmc-mono);'
+                            'color:var(--dmc-muted2);text-align:left">NORTE</th>'
+                            '<th style="padding:6px 10px;font:600 9px var(--dmc-mono);'
+                            'color:var(--dmc-muted2);text-align:left">LESTE</th>'
+                            '<th style="padding:6px 10px;font:600 9px var(--dmc-mono);'
+                            'color:var(--dmc-muted2);text-align:left">LAT (°)</th>'
+                            '<th style="padding:6px 10px;font:600 9px var(--dmc-mono);'
+                            'color:var(--dmc-muted2);text-align:left">LON (°)</th>'
+                            f'</tr></thead><tbody>{rows_html}</tbody></table></div>'
+                        )
+                    btn_gerar.enable()
+
+                ui.button(
+                    'Pré-visualizar', icon='preview',
+                    on_click=_preview,
+                ).props('unelevated no-caps').classes('dmc-btn dmc-btn-secondary')
+
+            preview_area = ui.element('div')
+
+        # ── Rodapé ─────────────────────────────────────────────────────────────
+        with ui.element('div').style(
+            'padding:14px 24px;border-top:1px solid var(--dmc-b1);'
+            'display:flex;justify-content:flex-end;gap:10px;flex-shrink:0'
+        ):
+            ui.button('Cancelar', on_click=dlg.close).props('flat no-caps').classes(
+                'dmc-btn dmc-btn-ghost'
+            )
+
+            async def _gerar():
+                text = await ui.run_javascript(
+                    "document.getElementById('shpg-coords')?.value || ''"
+                )
+                pts = _parse_coords_shp(text)
+                _st['pontos'] = pts
+
+                if not pts:
+                    ui.notify('Nenhum vértice reconhecido. Verifique o formato.', type='warning')
+                    return
+                if len(pts) < 3:
+                    ui.notify('Um polígono precisa de pelo menos 3 vértices.', type='warning')
+                    return
+
+                datum = _st['datum']
+                fuso  = _st['fuso']
+                dcfg  = _DATUM_CFG.get(datum, _DATUM_CFG['SIRGAS2000'])
+                ellip = dcfg['ellip']
+
+                rings: list[tuple[float, float]] = []
+                try:
+                    for norte, leste, _ in pts:
+                        if _PYPROJ:
+                            import pyproj as _pj
+                            _ellps = 'GRS80' if ellip == 'GRS80' else 'intl'
+                            src = _pj.CRS.from_proj4(
+                                f'+proj=utm +zone={fuso} +south +ellps={_ellps} +units=m +no_defs'
+                            )
+                            dst = _pj.CRS.from_epsg(dcfg['epsg_geo'])
+                            t   = _pj.Transformer.from_crs(src, dst, always_xy=True)
+                            lon, lat = t.transform(leste, norte)
+                        else:
+                            lat, lon = _utm_to_geo_any(norte, leste, fuso, ellip)
+                        rings.append((lon, lat))
+                except Exception as ex:
+                    ui.notify(f'Erro na conversão de coordenadas: {ex}', type='negative')
+                    return
+
+                polygons = [{'name': _st.get('nome_arq') or 'Poligono', 'rings': [rings]}]
+                nome_arq = (_st.get('nome_arq') or 'poligono').strip() or 'poligono'
+                base = f'SHP_{nome_arq}'
+
+                try:
+                    zip_bytes = make_shapefile_zip(polygons, base_name=base, datum=datum)
+                except Exception as ex:
+                    ui.notify(f'Erro ao gerar shapefile: {ex}', type='negative')
+                    return
+
+                # Salva na pasta do cliente se vinculado
+                cliente = _st.get('cliente')
+                if cliente:
+                    _save_to_cliente(cliente['nome'], f'{base}.zip', zip_bytes)
+
+                b64   = base64.b64encode(zip_bytes).decode()
+                fname = f'{base}.zip'
+                await ui.run_javascript(
+                    f'(function(){{'
+                    f'var a=document.createElement("a");'
+                    f'a.href="data:application/zip;base64,{b64}";'
+                    f'a.download="{fname}";'
+                    f'document.body.appendChild(a);a.click();document.body.removeChild(a);'
+                    f'}})()'
+                )
+                ui.notify(
+                    f'Shapefile gerado: {fname} · {len(pts)} vértice(s) · {datum} · fuso {fuso}S',
+                    type='positive',
+                )
+                dlg.close()
+
+            btn_gerar = ui.button(
+                'Gerar Shapefile', icon='download',
+                on_click=_gerar,
+            ).props('unelevated no-caps').classes('dmc-btn dmc-btn-primary').style(
+                'background:rgba(167,139,250,.12)!important;'
+                'border-color:rgba(167,139,250,.35)!important;color:#A78BFA!important'
+            )
+
+        # JS: fuso + datum card clicks
+        ui.timer(0.05, lambda: ui.run_javascript('''
+            (function(){
+                var fr = document.getElementById('shpg-fuso-row');
+                if(fr){
+                    fr.addEventListener('click', function(e){
+                        var card = e.target.closest('[data-shpzone]');
+                        if(!card) return;
+                        emitEvent('shpg_fuso_click', {zone: parseInt(card.getAttribute('data-shpzone'))});
+                    });
+                }
+                var dr = document.getElementById('shpg-datum-row');
+                if(dr){
+                    dr.addEventListener('click', function(e){
+                        var card = e.target.closest('[data-shpdatum]');
+                        if(!card) return;
+                        emitEvent('shpg_datum_click', {datum: card.getAttribute('data-shpdatum')});
+                    });
+                }
+            })();
+        '''), once=True)
+
+        ui.on('shpg_fuso_click',  lambda e: _set_fuso_shp(int(e.args.get('zone', _FUSO_DEFAULT))))
+        ui.on('shpg_datum_click', lambda e: _set_datum(e.args.get('datum', 'SIRGAS2000')))
+
+    dlg.open()
+
+
+def _parse_coords_shp(text: str) -> list[tuple[float, float, str]]:
+    """Parseia PONTO NORTE LESTE (tab, ; ou espaço) → lista de (norte, leste, nome)."""
+    out: list[tuple[float, float, str]] = []
+    for raw in text.strip().splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        for sep in ('\t', ';'):
+            if sep in line:
+                parts = [p.strip() for p in line.split(sep)]
+                break
+        else:
+            parts = line.split()
+        parts = [p for p in parts if p]
+        if len(parts) < 3:
+            continue
+        try:
+            norte = float(parts[1].replace(',', '.'))
+            leste = float(parts[2].replace(',', '.'))
+            out.append((norte, leste, parts[0]))
+        except ValueError:
+            pass
+    return out

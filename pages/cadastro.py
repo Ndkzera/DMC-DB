@@ -426,7 +426,11 @@ def _build_cadastro_form():
                     "obra_maps":   vals["obra_maps"]   if not obra_mesmo else "",
                     "data":        datetime.now().strftime("%d/%m/%Y %H:%M"),
                 }
-                add_cliente(cliente, usuario=current_user_label(), perfil=current_user_perfil())
+                try:
+                    add_cliente(cliente, usuario=current_user_label(), perfil=current_user_perfil())
+                except ValueError as _dup:
+                    ui.notify(str(_dup), type="warning")
+                    return
                 ui.notify(f"✓ Cliente '{vals['nome']}' cadastrado!", type="positive")
                 ui.navigate.to("/")
 

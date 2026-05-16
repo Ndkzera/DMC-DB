@@ -254,6 +254,147 @@ def main_page():
 
     ui.timer(60, _heartbeat)
 
+    # ── Notificações ─────────────────────────────────────────────────
+    from services.acesso import has_access
+    from services.financeiro import get_notificacoes
+
+    _pode_ver_fi = has_access(perfil, "fi_ver")
+
+    _NOTIF_LEVEL_COLORS = {
+        "danger":  ("#F87171", "rgba(248,113,113,.12)", "rgba(248,113,113,.3)"),
+        "warning": ("#FBBF24", "rgba(251,191,36,.10)",  "rgba(251,191,36,.3)"),
+        "info":    ("#60A5FA", "rgba(96,165,250,.10)",   "rgba(96,165,250,.3)"),
+    }
+
+    # Sino só é montado para usuários com acesso ao financeiro
+    if _pode_ver_fi:
+        with ui.teleport("#dmc-notif-slot"):
+            notif_btn = ui.element("button").style(
+                "position:relative;width:34px;height:34px;border-radius:8px;"
+                "border:1px solid var(--dmc-b2);background:transparent;cursor:pointer;"
+                "display:flex;align-items:center;justify-content:center;"
+                "color:var(--dmc-muted);transition:all .2s;flex-shrink:0;"
+            )
+            with notif_btn:
+                ui.html(
+                    '<span class="material-icons" style="font-size:18px;pointer-events:none">'
+                    'notifications_none</span>'
+                )
+                notif_badge = ui.html("").style(
+                    "position:absolute;top:4px;right:4px;pointer-events:none"
+                )
+
+        def _update_notif_badge():
+            notifs = get_notificacoes()
+            count  = len(notifs)
+            if count:
+                has_danger = any(n["nivel"] == "danger" for n in notifs)
+                col = "#F87171" if has_danger else "#FBBF24"
+                notif_badge.set_content(
+                    f'<span style="'
+                    f'min-width:14px;height:14px;border-radius:7px;padding:0 3px;'
+                    f'background:{col};color:#0a0a0a;font:700 8px var(--dmc-mono);'
+                    f'display:flex;align-items:center;justify-content:center;'
+                    f'line-height:1;box-sizing:border-box">'
+                    f'{count}</span>'
+                )
+                notif_btn.style(
+                    "position:relative;width:34px;height:34px;border-radius:8px;"
+                    f"border:1px solid {col}44;background:transparent;cursor:pointer;"
+                    "display:flex;align-items:center;justify-content:center;"
+                    f"color:{col};transition:all .2s;flex-shrink:0;"
+                )
+            else:
+                notif_badge.set_content("")
+                notif_btn.style(
+                    "position:relative;width:34px;height:34px;border-radius:8px;"
+                    "border:1px solid var(--dmc-b2);background:transparent;cursor:pointer;"
+                    "display:flex;align-items:center;justify-content:center;"
+                    "color:var(--dmc-muted);transition:all .2s;flex-shrink:0;"
+                )
+
+        _update_notif_badge()
+
+        def _open_notif_dialog():
+            notifs = get_notificacoes()
+            with ui.dialog() as ndlg:
+                ndlg.open()
+                with ui.card().style(
+                    "width:340px;max-width:96vw;padding:0;gap:0;"
+                    "background:var(--dmc-bg2)!important;"
+                    "border:1px solid var(--dmc-b2)!important;"
+                    "border-radius:14px!important;"
+                    "box-shadow:0 16px 48px rgba(0,0,0,.55)!important;"
+                ):
+                    with ui.element("div").style(
+                        "display:flex;align-items:center;gap:8px;"
+                        "padding:12px 16px;border-bottom:1px solid var(--dmc-b1);"
+                    ):
+                        ui.html(
+                            '<span class="material-icons" style="font-size:16px;color:var(--dmc-muted2)">'
+                            'notifications</span>'
+                            '<span style="font:700 13px var(--dmc-fd);color:var(--dmc-text);flex:1">'
+                            'Notificações</span>'
+                        )
+                        if notifs:
+                            ui.html(
+                                f'<span style="font:700 9px var(--dmc-mono);color:#F87171;'
+                                f'background:rgba(248,113,113,.1);padding:2px 7px;border-radius:4px">'
+                                f'{len(notifs)}</span>'
+                            )
+                        ncb = ui.element("button").style(
+                            "background:transparent;border:none;cursor:pointer;"
+                            "color:var(--dmc-muted2);display:flex;align-items:center;padding:2px"
+                        )
+                        with ncb:
+                            ui.html('<span class="material-icons" style="font-size:16px">close</span>')
+                        ncb.on("click", ndlg.close)
+
+                    with ui.element("div").style(
+                        "padding:10px;max-height:360px;overflow-y:auto;display:flex;"
+                        "flex-direction:column;gap:6px;"
+                    ):
+                        if not notifs:
+                            ui.html(
+                                '<div style="text-align:center;padding:28px 12px;">'
+                                '<span class="material-icons" style="font-size:36px;color:var(--dmc-muted2);'
+                                'opacity:.3;display:block;margin-bottom:8px">notifications_none</span>'
+                                '<div style="font:12px var(--dmc-fm);color:var(--dmc-muted2)">'
+                                'Nenhuma notificação pendente</div>'
+                                '</div>'
+                            )
+                        else:
+                            for n in notifs:
+                                tc, bg, brd = _NOTIF_LEVEL_COLORS.get(n["nivel"], _NOTIF_LEVEL_COLORS["info"])
+                                ui.html(
+                                    f'<div style="display:flex;align-items:flex-start;gap:10px;'
+                                    f'padding:10px 12px;border-radius:9px;'
+                                    f'background:{bg};border:1px solid {brd}">'
+                                    f'<span class="material-icons" style="font-size:18px;color:{tc};'
+                                    f'flex-shrink:0;margin-top:1px">{n["icon"]}</span>'
+                                    f'<div style="flex:1;min-width:0">'
+                                    f'<div style="font:500 12px var(--dmc-fm);color:{tc};line-height:1.3">'
+                                    f'{n["titulo"]}</div>'
+                                    f'<div style="font:10px var(--dmc-mono);color:var(--dmc-muted2);margin-top:3px">'
+                                    f'{n["detalhe"]}</div>'
+                                    f'</div></div>'
+                                )
+
+                    with ui.element("div").style(
+                        "padding:8px 12px;border-top:1px solid var(--dmc-b1);"
+                        "display:flex;justify-content:flex-end"
+                    ):
+                        goto = ui.element("button").classes("dmc-btn dmc-btn-secondary dmc-btn-sm")
+                        with goto:
+                            ui.html(
+                                '<span class="material-icons" style="font-size:13px">payments</span>'
+                                "<span>Ir ao Financeiro</span>"
+                            )
+                        goto.on("click", lambda: [ndlg.close(), ui.navigate.to("/financeiro")])
+
+        notif_btn.on("click", _open_notif_dialog)
+        ui.timer(120, _update_notif_badge)
+
     with ui.teleport("#dmc-logout-slot"):
         ui.button(icon="logout", on_click=_logout).props('flat round dense').tooltip("Sair").style(
             "color:#527A52;font-size:18px;"

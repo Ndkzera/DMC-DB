@@ -45,7 +45,20 @@ def _salvar_dados_pasta(cliente: dict) -> None:
     (pasta / "dados.txt").write_text(cliente_to_txt(cliente), encoding="utf-8")
 
 
+def cpf_exists(cpf: str) -> bool:
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT 1 FROM clientes WHERE cpf=?", (cpf,)).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 def add_cliente(cliente: dict, usuario: str = "", perfil: str = "") -> None:
+    cpf = cliente.get("cpf", "")
+    if cpf and cpf_exists(cpf):
+        tipo_doc = "CNPJ" if len("".join(c for c in cpf if c.isdigit())) == 14 else "CPF"
+        raise ValueError(f"{tipo_doc} {cpf} já está cadastrado.")
     conn = get_conn()
     try:
         _insert_cliente(conn, cliente)

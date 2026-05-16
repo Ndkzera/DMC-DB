@@ -42,16 +42,29 @@ _LINKS = [
 
 _CSS = """
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body, .nicegui-content {
-  height: 100% !important; margin: 0 !important; padding: 0 !important;
+html, body {
+  height: 100% !important; width: 100% !important;
+  margin: 0 !important; padding: 0 !important;
   overscroll-behavior: none;
+}
+/* Anular todos os wrappers do Quasar/NiceGUI */
+.nicegui-content,
+.q-layout, .q-layout__section--marginal,
+.q-page-container, .q-page {
+  margin: 0 !important; padding: 0 !important;
+  min-height: 0 !important; height: auto !important;
+  width: 100% !important; max-width: 100% !important;
 }
 body { background: #0C130C; }
 @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
 @keyframes fu   { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
 
+/* Cobre o viewport inteiro, independente de qualquer container pai */
 .mb-page {
-  height: 100vh; background: #0C130C;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  padding-top: env(safe-area-inset-top, 0px);
+  background: #0C130C;
   display: flex; flex-direction: column; overflow: hidden;
 }
 .mb-header {
@@ -68,7 +81,7 @@ body { background: #0C130C; }
 /* Scrollable area inside each tab */
 .mb-scroll {
   flex: 1; overflow-y: auto;
-  padding: 16px 16px calc(76px + env(safe-area-inset-bottom, 0px));
+  padding: 16px 16px 76px;
   display: flex; flex-direction: column; gap: 14px;
   -webkit-overflow-scrolling: touch;
 }
@@ -185,8 +198,10 @@ body { background: #0C130C; }
   min-height: 56px; position: relative;
 }
 .mb-nav-btn:active { opacity: .55; }
-.mb-nav-btn .nb-icon  { font-size: 22px; }
-.mb-nav-btn .nb-label { font: 600 9px 'DM Mono',monospace; letter-spacing: .06em; text-transform: uppercase; }
+.mb-nav-btn .nb-icon  { font-size: 22px; color: #2A4A2A; transition: color .15s; }
+.mb-nav-btn .nb-label { font: 600 9px 'DM Mono',monospace; letter-spacing: .06em; text-transform: uppercase; color: #2A4A2A; transition: color .15s; }
+.mb-nav-btn.active .nb-icon,
+.mb-nav-btn.active .nb-label { color: var(--nav-color, #4ADE80); }
 .mb-nav-btn.active::before {
   content: ''; position: absolute; top: 0; left: 18%; right: 18%;
   height: 2.5px; border-radius: 0 0 4px 4px;
@@ -196,11 +211,16 @@ body { background: #0C130C; }
 
 _NAV_JS = """
 <script>
+var _MB_MUTED = '#2A4A2A';
 function mbSetTab(tab, color) {
   document.querySelectorAll('.mb-nav-btn').forEach(function(b) {
     var active = b.dataset.tab === tab;
     b.classList.toggle('active', active);
-    if (active && color) b.style.setProperty('--nav-color', color);
+    var col = active ? color : _MB_MUTED;
+    b.querySelectorAll('.nb-icon,.nb-label').forEach(function(s) {
+      s.style.color = col;
+    });
+    if (active) b.style.setProperty('--nav-color', color);
   });
 }
 </script>
@@ -1003,11 +1023,11 @@ def mobile_page():
                 is_active = tab_id == "home"
                 btn = ui.element("button").classes("mb-nav-btn" + (" active" if is_active else ""))
                 btn.props(f'data-tab="{tab_id}"')
-                if is_active:
-                    btn.style(f"--nav-color:{tab_color}")
+                btn.style(f"--nav-color:{tab_color}")
+                span_color = tab_color if is_active else '#2A4A2A'
                 with btn:
-                    ui.html(f'<span class="material-icons nb-icon" style="color:{tab_color}">{tab_icon}</span>')
-                    ui.html(f'<span class="nb-label" style="color:{tab_color}">{tab_label}</span>')
+                    ui.html(f'<span class="material-icons nb-icon" style="color:{span_color}">{tab_icon}</span>')
+                    ui.html(f'<span class="nb-label" style="color:{span_color}">{tab_label}</span>')
                 btn.on("click", lambda t=tab_id, c=tab_color: state.switch_tab(t, c))
 
     # Renderização inicial

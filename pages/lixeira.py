@@ -151,6 +151,25 @@ html, body, .nicegui-content,
   padding: 100px 20px; gap: 14px; color: var(--dmc-muted2);
 }
 
+/* ── checkbox ── */
+.lx-chk {
+  width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0;
+  cursor: pointer; accent-color: var(--dmc-green);
+}
+.lx-chk-th { width: 40px; }
+
+/* ── bulk bar ── */
+.lx-bulk-bar {
+  display: none; align-items: center; gap: 10px;
+  padding: 0 16px; height: 34px;
+  background: rgba(74,222,128,.08); border: 1px solid rgba(74,222,128,.3);
+  border-radius: 8px; flex-shrink: 0;
+}
+.lx-bulk-bar.visible { display: flex; }
+.lx-bulk-cnt {
+  font: 600 11px var(--dmc-mono); color: var(--dmc-green); white-space: nowrap;
+}
+
 /* ── dialog ── */
 .lx-dlg-card {
   width: min(440px, 95vw); padding: 0;
@@ -236,6 +255,7 @@ def lixeira_page():
 
     view_state = {"v": "list"}
     dlg_state  = {"on_confirm": None}
+    sel_state  = {"paths": []}
 
     with ui.element("div").classes("lx-page").style("width:100%"):
 
@@ -388,6 +408,24 @@ def lixeira_page():
                     with btn:
                         ui.html(f'<span class="material-icons">{ic}</span>')
                     view_btns[vv] = btn
+
+            ui.element("div").classes("lx-sep")
+
+            # ── Bulk action bar ──────────────────────────────────────
+            bulk_bar = ui.element("div").classes("lx-bulk-bar").props('id="lx-bulk-bar"')
+            with bulk_bar:
+                bulk_cnt = ui.html(
+                    '<span class="lx-bulk-cnt" id="lx-bulk-cnt">0 selecionado(s)</span>'
+                )
+                bulk_restore_btn = ui.element("button").classes("dmc-btn dmc-btn-secondary dmc-btn-sm")
+                with bulk_restore_btn:
+                    ui.html(
+                        '<span class="material-icons" style="font-size:13px">settings_backup_restore</span>'
+                        "<span>Restaurar</span>"
+                    )
+                bulk_cancel_btn = ui.element("button").classes("dmc-btn dmc-btn-ghost dmc-btn-sm")
+                with bulk_cancel_btn:
+                    ui.html("<span>Cancelar</span>")
 
             ui.element("div").classes("lx-sep")
             esvaziar_btn = ui.element("button").classes("dmc-btn dmc-btn-danger dmc-btn-sm")
@@ -578,6 +616,7 @@ def lixeira_page():
                     with ui.element("thead"):
                         with ui.element("tr"):
                             for col, w in [
+                                ("chk-all",     "40px"),
                                 ("",            "40px"),
                                 ("Nome",        "1550px"),
                                 ("Tipo",        "72px"),
@@ -589,11 +628,23 @@ def lixeira_page():
                             ]:
                                 s = f"width:{w}" if w else ""
                                 with ui.element("th").style(s):
-                                    ui.html(col)
+                                    if col == "chk-all":
+                                        ui.html(
+                                            '<input type="checkbox" class="lx-chk" id="lx-all-chk" '
+                                            'title="Selecionar todos" '
+                                            'onchange="lxSelectAll(this.checked)">'
+                                        )
+                                    else:
+                                        ui.html(col)
                     with ui.element("tbody"):
                         for p in items:
                             is_dir, orig, ddate, ic, co, lb, sz_b, origin, by_who = _item_info(p)
                             with ui.element("tr"):
+                                with ui.element("td"):
+                                    ui.html(
+                                        f'<input type="checkbox" class="lx-chk lx-item-chk" '
+                                        f'data-lxpath="{p.name}" onchange="lxUpdateBar()">'
+                                    )
                                 with ui.element("td"):
                                     ui.html(
                                         f'<span class="material-icons" style="font-size:22px;'
@@ -630,7 +681,9 @@ def lixeira_page():
                     is_dir, orig, ddate, ic, co, lb, sz_b, origin, by_who = _item_info(p)
                     with ui.element("div").classes("lx-file-card"):
                         ui.html(
-                            f'<div style="display:flex;align-items:center;gap:8px">'
+                            f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">'
+                            f'<input type="checkbox" class="lx-chk lx-item-chk" '
+                            f'data-lxpath="{p.name}" onchange="lxUpdateBar()">'
                             f'<span class="material-icons" style="font-size:26px;color:{co}">{ic}</span>'
                             f'<span class="badge-dmc" style="background:{co}18;color:{co};'
                             f'border:1px solid {co}38;font-size:9px">{lb}</span></div>'
@@ -680,4 +733,83 @@ def lixeira_page():
             _pedir_senha("Esvaziar toda a lixeira?", _confirm)
 
         esvaziar_btn.on("click", _esvaziar)
+
+        # ── Bulk restore JS helpers (injected once) ──────────────────
+        ui.add_body_html("""
+<script>
+function lxUpdateBar() {
+  var checked = document.querySelectorAll('.lx-item-chk:checked');
+  var bar = document.getElementById('lx-bulk-bar');
+  var cnt = document.getElementById('lx-bulk-cnt');
+  if (!bar) return;
+  if (checked.length > 0) {
+    bar.classList.add('visible');
+    if (cnt) cnt.textContent = checked.length + ' selecionado(s)';
+  } else {
+    bar.classList.remove('visible');
+    var allChk = document.getElementById('lx-all-chk');
+    if (allChk) allChk.checked = false;
+  }
+}
+function lxSelectAll(v) {
+  document.querySelectorAll('.lx-item-chk').forEach(function(c) { c.checked = v; });
+  lxUpdateBar();
+}
+</script>
+""")
+
+        # ── Bulk restore handler ─────────────────────────────────────
+        async def _bulk_restore():
+            names = await ui.run_javascript(
+                "Array.from(document.querySelectorAll('.lx-item-chk:checked'))"
+                ".map(function(c){return c.getAttribute('data-lxpath');})"
+            )
+            if not names:
+                return
+            ok = erros = 0
+            # Collect Path objects before any restore to avoid DOM churn mid-loop
+            paths = [TRASH_DIR / n for n in names if (TRASH_DIR / n).exists()]
+            for p in paths:
+                orig  = _orig_name(p)
+                meta  = read_trash_meta(p.name)
+                _raw  = meta.get("origin", "")
+                origin_dir = (ROOT_DIR / _raw) if (_raw and _raw not in (".", "/")) else ROOT_DIR
+                origin_dir.mkdir(parents=True, exist_ok=True)
+                dest = origin_dir / orig
+                if dest.exists():
+                    stem, suffix = Path(orig).stem, Path(orig).suffix
+                    i = 1
+                    while dest.exists():
+                        dest = origin_dir / f"{stem}_{i}{suffix}"
+                        i += 1
+                try:
+                    shutil.move(str(p), str(dest))
+                    meta_f = TRASH_DIR / ".meta" / f"{p.name}.json"
+                    if meta_f.exists():
+                        meta_f.unlink()
+                    folder_lbl = _raw if _raw and _raw not in (".", "/") else "Raiz"
+                    entidade = "pasta" if dest.is_dir() else "arquivo"
+                    log_action(
+                        current_user_label(), current_user_perfil(),
+                        "editar", entidade, orig, folder_lbl, "Restaurado em lote da lixeira",
+                    )
+                    ok += 1
+                except Exception:
+                    erros += 1
+            msg = f"{ok} item(s) restaurado(s)."
+            if erros:
+                msg += f" {erros} erro(s)."
+            ui.notify(msg, type="positive" if not erros else "warning")
+            _render()
+
+        async def _bulk_cancel():
+            ui.run_javascript(
+                "document.querySelectorAll('.lx-item-chk').forEach(function(c){c.checked=false;});"
+                "var a=document.getElementById('lx-all-chk');if(a)a.checked=false;"
+                "lxUpdateBar();"
+            )
+
+        bulk_restore_btn.on("click", _bulk_restore)
+        bulk_cancel_btn.on("click", _bulk_cancel)
+
         _render()

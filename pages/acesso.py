@@ -14,12 +14,13 @@ _PERFIL_ABBR = {
 }
 
 _CAT_META = {
-    "Sistema":        ("lock",                 "#F87171"),
-    "Agenda":         ("calendar_month",       "#FBBF24"),
-    "Clientes":       ("people",               "#60A5FA"),
-    "Obras":          ("engineering",          "#34D399"),
-    "Administrativo": ("admin_panel_settings", "#C4B5FD"),
-    "Arquivos":       ("folder_open",          "#F97316"),
+    "Sistema":        ("lock",                    "#F87171"),
+    "Agenda":         ("calendar_month",          "#FBBF24"),
+    "Clientes":       ("people",                  "#60A5FA"),
+    "Obras":          ("engineering",             "#34D399"),
+    "Financeiro":     ("account_balance_wallet",  "#4ADE80"),
+    "Administrativo": ("admin_panel_settings",    "#C4B5FD"),
+    "Arquivos":       ("folder_open",             "#F97316"),
 }
 
 _CSS = """
